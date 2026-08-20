@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "active_work_id": "narae-signing-web-mvp",
+  "works": {
+    "narae-signing-web-mvp": {
+      "work_id": "narae-signing-web-mvp",
+      "active_plan": ".omo/plans/narae-signing-web-mvp.md",
+      "plan_name": "narae-signing-web-mvp",
+      "session_ids": [
+        "codex:01a01529-0717-7f60-97f6-52fe00771d96"
+      ],
+      "status": "active",
+      "worktree_path": null
+    }
+  }
+}
