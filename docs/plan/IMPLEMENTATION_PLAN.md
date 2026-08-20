@@ -230,6 +230,8 @@ docs/
 - 변경 요청은 CSRF 검사를 거친다. 공개 서명 API도 signer session과 CSRF 또는 엄격한 Origin 검사를 통과해야 한다.
 - 관리자 API는 인증과 owner_id 범위 확인을 함께 한다.
 - 상태를 바꾸는 요청은 현재 서버 상태를 트랜잭션 안에서 다시 검증한다.
+- 인증 API 응답은 성공·실패 모두 `Cache-Control: no-store, private`를 사용한다.
+- 로그인 클라이언트 IP는 NPM에서 프런트엔드를 거쳐 전달한 단일 `X-Narae-Client-IP` IPv4/IPv6 리터럴만 신뢰하며 `X-Forwarded-For`는 사용하지 않는다.
 
 ### 7.2 인증 API
 
