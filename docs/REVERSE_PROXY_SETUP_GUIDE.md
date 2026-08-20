@@ -104,14 +104,23 @@ server {
         proxy_pass http://backend:8080;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP "";
+        proxy_set_header X-Forwarded-For "";
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+        proxy_set_header X-Narae-Client-IP $http_x_narae_client_ip;
+        proxy_request_buffering on;
+    }
+
+    location ~ ^/api/v1/admin/boards/[^/]+/events$ {
+        proxy_pass http://backend:8080;
+        proxy_http_version 1.1;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+        proxy_set_header X-Narae-Client-IP $http_x_narae_client_ip;
         proxy_buffering off;
-        proxy_request_buffering off;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
+        add_header X-Accel-Buffering no always;
     }
 
     location = /health {
@@ -125,8 +134,8 @@ server {
 중요 사항:
 
 - NPM에서 frontend까지는 내부 HTTP일 수 있으므로, frontend가 X-Forwarded-Proto를 $scheme 값인 http로 덮어쓰면 안 된다. NPM이 전달한 https 값을 backend까지 보존한다.
-- SSE는 WebSocket이 아니다. 다만 긴 HTTP 응답이므로 frontend와 NPM에서 proxy_buffering을 끄고 read timeout을 충분히 길게 둔다.
-- backend는 server.forward-headers-strategy=native 설정으로 전달된 원본 HTTPS 정보를 처리한다. 이 설정이 없으면 Secure 쿠키·리다이렉트가 잘못 동작할 수 있다.
+- SSE는 WebSocket이 아니다. SSE 응답만 `proxy_buffering off`와 3600초 timeout을 사용한다. 로그인·서명·업로드 같은 mutation 요청은 `proxy_request_buffering on`을 유지한다.
+- backend의 `server.forward-headers-strategy=none`은 의도된 값이다. backend는 `172.30.0.10` frontend만 신뢰하고 `TrustedProxyFilter`가 단일 `X-Narae-Client-IP`와 `X-Forwarded-Proto`를 검증한다. NPM은 외부 입력값을 전달하지 않고 아래 값으로 덮어써야 한다.
 
 ## 5. DNS와 라우터 설정
 
@@ -189,16 +198,21 @@ NPM이 인증서를 발급하지 못하면 DNS가 아직 다른 주소를 가리
 
 ### 6.3 Advanced 탭
 
-NPM이 생성한 Proxy Host server 블록에 다음 지시어를 추가한다.
+NPM이 생성한 Proxy Host server 블록에 다음 지시어를 추가한다. `X-Narae-Client-IP`는 브라우저가 보낸 값을 전달하지 않고 NPM이 관측한 peer 주소로 덮어쓴다. NPM LXC 앞에 별도 CDN/프록시를 두지 않는 현재 직접 NAT 구성에서만 이 주소를 사용한다.
 
 ~~~nginx
-proxy_buffering off;
-proxy_request_buffering off;
+proxy_set_header X-Narae-Client-IP $remote_addr;
+proxy_set_header X-Forwarded-Proto https;
+proxy_set_header X-Forwarded-Host $host;
+proxy_set_header X-Forwarded-For "";
+proxy_set_header X-Real-IP "";
+proxy_buffering on;
+proxy_request_buffering on;
 proxy_read_timeout 3600s;
 proxy_send_timeout 3600s;
 ~~~
 
-이 설정은 SSE가 중간 프록시 버퍼에 쌓여 관리자 전체보기 갱신이 늦어지는 일을 막는다.
+frontend의 SSE 응답은 `X-Accel-Buffering: no`를 반환하므로 NPM은 그 응답만 버퍼링하지 않는다. 일반 응답 버퍼링과 mutation 요청 버퍼링은 계속 켜 둔다. Websockets Support는 Upgrade 헤더 호환을 제공하지만 SSE의 성공 조건은 `text/event-stream`, `X-Accel-Buffering: no`, 응답 지연 없음, 3600초 timeout이다.
 
 ## 7. 배포 전 보안 점검
 
@@ -207,7 +221,8 @@ proxy_send_timeout 3600s;
 - NPM은 signing.lapis0875.com 하나만 앱 LXC로 보낸다. MinIO Console용 별도 Proxy Host는 만들지 않는다.
 - NPM과 Portainer의 관리 UI는 공개 서명 도메인과 분리한다.
 - 앱의 master key, PostgreSQL·MinIO 비밀번호, GHCR 토큰, Portainer webhook은 NPM 설정의 Advanced 탭이나 Git 저장소에 넣지 않는다.
-- NPM에서 전달되는 X-Forwarded-Proto가 backend까지 보존되는지 확인한다. Secure·HttpOnly 관리자 세션 쿠키가 HTTPS에서만 전달되어야 한다.
+- NPM이 외부 `X-Narae-Client-IP`, `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Proto`를 그대로 신뢰하지 않고 위 값으로 덮어쓰는지 확인한다. backend는 frontend `172.30.0.10`에서 온 전달 헤더만 신뢰한다.
+- HTTPS 로그인 응답의 `ADMIN_SESSION`과 공개 식별 응답의 `SIGNER_SESSION`은 `Secure; HttpOnly; SameSite=Lax`여야 한다. `XSRF-TOKEN`은 `Secure; SameSite=Lax`여야 하며 JavaScript가 CSRF 헤더로 읽어야 하므로 HttpOnly가 아니다.
 
 ## 8. 외부 검증 절차
 
@@ -223,9 +238,23 @@ curl -fsS https://signing.lapis0875.com/health
 
 기대 결과:
 
-- 첫 요청은 HTTPS 주소로 리다이렉트된다.
+- 첫 요청은 HTTP `301`이고 path/query를 보존한 정확한 `Location: https://signing.lapis0875.com/...`를 반환한다. 다른 host, scheme, port로 이동하면 실패다.
 - 두 번째 요청은 유효한 Let’s Encrypt 인증서와 HTTP 200을 받는다.
 - health 응답에는 상태만 있고 DB 주소·키·컨테이너 세부 정보가 없다.
+
+리다이렉트와 전달 헤더를 실제 path/query로 검증한다.
+
+~~~sh
+curl -sS -D - -o /dev/null 'http://signing.lapis0875.com/health?probe=redirect'
+curl -sS -D - -o /dev/null \
+  -H 'X-Narae-Client-IP: 203.0.113.200' \
+  -H 'X-Forwarded-Proto: http' \
+  'https://signing.lapis0875.com/health'
+~~~
+
+두 번째 요청이 성공하더라도 애플리케이션 로그에는 NPM이 관측한 테스트 client IP만 있어야 하고 주입한 문서용 주소나 forwarded header가 신뢰되면 실패다. 로그·스크린샷에서는 client IP와 쿠키 값을 가린다.
+
+SSE는 관리자 전체보기에서 개발자 도구 Network를 열어 검증한다. 응답 `Content-Type: text/event-stream`과 `X-Accel-Buffering: no`를 확인하고 10분 동안 두 번의 synthetic 변경이 즉시 도착하는지 기록한다. 동시에 mutation 요청이 완전한 body로 정상 처리되는지 확인한다. 쿠키 evidence는 이름과 속성만 남기고 값을 완전히 가린다.
 
 ### 8.2 브라우저 행사 흐름
 
@@ -237,12 +266,19 @@ curl -fsS https://signing.lapis0875.com/health
 6. 링크를 재발급하고, 이전 탭의 서명 제출이 일반 무효 안내를 받는지 확인한다.
 7. 보드를 마감하고 final.png 다운로드를 확인한다.
 
-### 8.3 배포 뒤 점검
+### 8.3 배포 전 release preflight
+
+1. GitHub Actions `Manual immutable release`를 `dry_run: true`로 실행한다. 기존 annotated `vX.Y.Z`의 peeled SHA가 승인 candidate와 같아야 하며 registry/Portainer call 수는 0이어야 한다.
+2. frontend/backend image 이름, 동일 revision SHA, 예상 package privacy, 현재 Portainer pair를 기록한다. digest와 SHA는 기록할 수 있지만 credential, cookie, share token, webhook URL은 `[REDACTED]`로 대체한다.
+3. non-dry 실행은 GitHub `production` environment reviewer 승인 뒤에만 허용한다. 두 image digest/revision 검증 전에 webhook이 호출되면 실패다.
+4. backend/PostgreSQL/MinIO/Portainer/webhook이 public하지 않은지 확인한다. manual Stack을 수정·재생성하지 않는다.
+
+### 8.4 배포 뒤 점검
 
 - GitHub Actions가 선택한 vX.Y.Z 이미지 태그와 Portainer Stack의 실제 image tag가 일치하는지 확인한다.
 - backend health가 UP이고 Flyway 오류가 없는지 확인한다.
 - PostgreSQL과 MinIO 볼륨이 /srv/narae-signing 아래 bind mount를 사용하는지 확인한다.
-- 외부 데이터 백업은 아직 없다는 위험을 운영 기록에 남긴다.
+- 이 절차는 backup 기능을 만들거나 실행하지 않는다. 기존 운영 backup 정책의 존재 여부만 별도 위험 기록으로 남긴다.
 
 ## 9. 장애 진단
 
@@ -260,5 +296,6 @@ curl -fsS https://signing.lapis0875.com/health
 
 - Proxy Host 설정 변경 전 NPM 화면의 현재 값을 기록한다.
 - 인증서·도메인 문제를 해결할 때 APP_LXC_IP나 내부 포트 공개 범위를 넓히지 않는다.
-- 애플리케이션 롤백은 이전 검증 GHCR 태그를 Portainer에 다시 배포해 수행한다. NPM Proxy Host는 같은 도메인·대상을 유지한다.
+- 롤백 전에 `scripts/release/validate-rollback.sh CURRENT_TAG ROLLBACK_TAG`로 더 낮고 서로 다른 기존 annotated tag, origin/local object 일치, peeled commit을 검증한다. frontend/backend의 private GHCR image가 그 commit revision과 일치할 때만 pair로 선택하고 webhook을 마지막에 호출한다.
+- 롤백은 image pair만 선택한다. down migration, volume 삭제, manual Stack 재생성, 이 문서 범위의 backup 작업을 하지 않는다. 현재 DB schema와 이전 backend의 호환성이 입증되지 않으면 중단한다.
 - NPM이 Let’s Encrypt 인증서를 자동 갱신할 수 있도록 80/443 전달 규칙과 DNS A 레코드를 지속적으로 유지한다.
