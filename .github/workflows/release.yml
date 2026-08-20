@@ -1,0 +1,102 @@
+name: Manual immutable release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing annotated release tag (vX.Y.Z)
+        required: true
+        type: string
+      dry_run:
+        description: Validate and plan without registry or Portainer calls
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: narae-production-release
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.resolve.outputs.commit }}
+    steps:
+      - name: Check out release controls
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          path: controls
+      - name: Resolve existing immutable tag
+        id: resolve
+        working-directory: controls
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          commit=$(./scripts/release/resolve-tag.sh "$RELEASE_TAG")
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+  dry-run:
+    if: ${{ inputs.dry_run }}
+    needs: authorize
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted release controls
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          path: controls
+      - name: Check out peeled release source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          path: source
+          ref: ${{ needs.authorize.outputs.commit }}
+      - name: Plan release with zero registry or webhook calls
+        working-directory: source
+        env:
+          EXPECTED_RELEASE_COMMIT: ${{ needs.authorize.outputs.commit }}
+          RELEASE_IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: ../controls/scripts/release/run.sh --tag "$RELEASE_TAG" --dry-run
+
+  deliver:
+    if: ${{ ! inputs.dry_run }}
+    needs: authorize
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out trusted release controls
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          path: controls
+      - name: Check out peeled release source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          path: source
+          ref: ${{ needs.authorize.outputs.commit }}
+      - name: Log in to private GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5 # v3.8.0
+      - name: Build immutable pair serially, then invoke Portainer
+        working-directory: source
+        env:
+          EXPECTED_RELEASE_COMMIT: ${{ needs.authorize.outputs.commit }}
+          PORTAINER_WEBHOOK_URL: ${{ secrets.PORTAINER_WEBHOOK_URL }}
+          RELEASE_IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: ../controls/scripts/release/run.sh --tag "$RELEASE_TAG"
