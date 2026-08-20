@@ -125,6 +125,7 @@ class FlywaySchemaIT {
         application.setAdditionalProfiles(profile);
         try (var context = application.run(
                 "--spring.main.banner-mode=off",
+                "--spring.main.lazy-initialization=true",
                 "--spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration",
                 "--app.public-origin=https://signing.example.invalid",
                 "--app.minio-endpoint=http://minio.invalid",

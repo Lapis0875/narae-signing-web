@@ -17,6 +17,8 @@ dependencies {
     implementation("org.springframework.session:spring-session-jdbc")
     implementation("org.flywaydb:flyway-core")
     implementation("org.flywaydb:flyway-database-postgresql")
+    implementation("io.minio:minio:8.5.17")
+    implementation("org.apache.commons:commons-fileupload2-jakarta-servlet6:2.0.0-M5")
     runtimeOnly("org.postgresql:postgresql")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

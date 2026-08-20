@@ -7,5 +7,8 @@ public record PlatformProperties(
         String publicOrigin,
         String minioEndpoint,
         String minioBucket,
+        String minioAccessKey,
+        String minioSecretKey,
         String masterKeyFile,
-        Integer cryptoKeyVersion) {}
+        Integer cryptoKeyVersion,
+        String trustedFrontendIp) {}
