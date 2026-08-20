@@ -29,7 +29,20 @@ function PublicSignRoute() {
 }
 
 // TODO11_AUTH_ROUTES_START
-const authRoutes = <Route path="/login" element={<RouteShell endpoint="/api/v1/auth/session" title="관리자 로그인" />} />
+import { AdminRouteGuard } from "./AdminRouteGuard.tsx"
+import { LoginRoute } from "./LoginRoute.tsx"
+
+const authRoutes = (
+  <>
+    <Route path="/login" element={<LoginRoute />} />
+    <Route element={<AdminRouteGuard />}>
+      <Route path="/boards" element={<RouteShell admin endpoint="/api/v1/admin/boards" title="보드 목록" />} />
+      <Route path="/boards/new" element={<RouteShell admin endpoint="/api/v1/admin/boards/new" title="새 보드" />} />
+      <Route path="/boards/:boardId/edit" element={<BoardRoute mode="edit" />} />
+      <Route path="/boards/:boardId/full" element={<BoardRoute mode="full" />} />
+    </Route>
+  </>
+)
 // TODO11_AUTH_ROUTES_END
 
 // TODO17_ADMIN_BOARD_ROUTES_START

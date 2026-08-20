@@ -60,19 +60,22 @@ class FlywaySchemaIT {
                     + UUID.randomUUID() + "','" + roster + "','PLACED',0.1,0.1,0.3,0.2)");
 
             // Then: versions/tables exist, retry is clean, and duplicate identity is rejected.
-            assertThat(first.migrationsExecuted).isEqualTo(2);
+            assertThat(first.migrationsExecuted).isEqualTo(3);
             assertThat(second.migrationsExecuted).isZero();
             try (var tables = connection.getMetaData().getTables(null, "public", "%", new String[] {"TABLE"})) {
                 var names = new java.util.HashSet<String>();
                 while (tables.next()) names.add(tables.getString("TABLE_NAME").toLowerCase());
                 assertThat(names).containsAll(Set.of("admin_user", "board", "roster_entry", "signature_slot",
-                        "background_asset", "board_deletion_job", "spring_session", "spring_session_attributes"));
+                        "background_asset", "board_deletion_job", "spring_session", "spring_session_attributes",
+                        "admin_login_ip_window", "login_failure_state"));
             }
             try (var indexes = statement.executeQuery("SELECT indexname FROM pg_indexes WHERE schemaname='public'")) {
                 var names = new java.util.HashSet<String>();
                 while (indexes.next()) names.add(indexes.getString(1));
                 assertThat(names).contains("board_owner_id_idx", "roster_entry_board_id_idx",
-                        "background_asset_board_id_idx", "roster_entry_board_identity_hmac_key");
+                        "background_asset_board_id_idx", "roster_entry_board_identity_hmac_key",
+                        "admin_login_ip_window_window_started_at_idx", "login_failure_state_pkey",
+                        "login_failure_state_updated_at_idx", "login_failure_state_locked_until_idx");
             }
             try (var columns = statement.executeQuery("SELECT table_name || '.' || column_name FROM information_schema.columns WHERE table_schema='public'")) {
                 var names = new java.util.HashSet<String>();
@@ -81,7 +84,8 @@ class FlywaySchemaIT {
                         "board.share_link_version", "board.share_token_lookup_hash", "board.share_token_ciphertext",
                         "board.share_token_nonce", "board.share_token_key_version", "signature_slot.slot_revision",
                         "background_asset.object_key_nonce", "background_asset.object_key_key_version",
-                        "board_deletion_job.reason");
+                        "board_deletion_job.reason", "admin_login_ip_window.attempt_count",
+                        "login_failure_state.locked_until");
             }
             assertThatThrownBy(() -> statement.execute("INSERT INTO roster_entry(id,board_id,encrypted_identity,identity_nonce,identity_key_version,identity_hmac) VALUES ('"
                     + UUID.randomUUID() + "','" + board + "',decode('21','hex'),decode('22','hex'),1,decode('13','hex'))"))
@@ -110,7 +114,8 @@ class FlywaySchemaIT {
         // Given: exact Flyway resources shipped by backend.
         var loader = FlywaySchemaIT.class.getClassLoader();
         var sql = new String(loader.getResourceAsStream("db/migration/V1__core_schema.sql").readAllBytes())
-                + new String(loader.getResourceAsStream("db/migration/V2__spring_session.sql").readAllBytes());
+                + new String(loader.getResourceAsStream("db/migration/V2__spring_session.sql").readAllBytes())
+                + new String(loader.getResourceAsStream("db/migration/V3__login_defense.sql").readAllBytes());
 
         // When: migration operations are normalized for contract inspection.
         var normalized = sql.toLowerCase(java.util.Locale.ROOT);
