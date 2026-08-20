@@ -1,1 +1,202 @@
 @import "tailwindcss";
+
+:root {
+  --color-ink-navy: #0b3558;
+  --color-signal-blue: #006bff;
+  --color-slate-gray: #476788;
+  --color-cloud: #f8f9fb;
+  --color-paper: #fff;
+  --color-pebble: #f0f3f8;
+  --color-hairline: #d4e0ed;
+  --color-focus-ring: color-mix(
+    in srgb,
+    var(--color-signal-blue) 35%,
+    transparent
+  );
+  --font-interface: ui-sans-serif, system-ui, sans-serif;
+  --font-size-body: 1rem;
+  --font-size-heading: 2.375rem;
+  --font-size-label: 0.875rem;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --line-height-body: 1.5;
+  --line-height-heading: 1.21;
+  --space-0: 0;
+  --space-4: 0.25rem;
+  --space-8: 0.5rem;
+  --space-10: 0.625rem;
+  --space-12: 0.75rem;
+  --space-16: 1rem;
+  --space-24: 1.5rem;
+  --space-32: 2rem;
+  --space-48: 3rem;
+  --space-64: 4rem;
+  --border-width: 0.0625rem;
+  --focus-width: 0.1875rem;
+  --control-height: 2.75rem;
+  --page-min: 20rem;
+  --content-max: 75rem;
+  --panel-default-max: 35rem;
+  --panel-wide-max: 47.5rem;
+  --radius-control: 0.5rem;
+  --radius-panel: 1.5rem;
+  --shadow-card: rgba(71, 103, 136, 0.04) 0 0.25rem 0.3125rem,
+    rgba(71, 103, 136, 0.03) 0 0.5rem 0.9375rem,
+    rgba(71, 103, 136, 0.08) 0 1.875rem 3.125rem;
+  --mobile-breakpoint: 47.9375rem;
+  font-family: var(--font-interface);
+  font-size: var(--font-size-body);
+  color: var(--color-ink-navy);
+  background: var(--color-cloud);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: var(--page-min);
+  margin: var(--space-0);
+  background: var(--color-cloud);
+  color: var(--color-ink-navy);
+  font-family: var(--font-interface);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-body);
+}
+
+h1,
+p {
+  margin-block: var(--space-0) var(--space-16);
+}
+
+h1 {
+  font-size: var(--font-size-heading);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-heading);
+}
+
+label {
+  color: var(--color-slate-gray);
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-semibold);
+}
+
+.app-shell {
+  min-height: 100dvh;
+  background: var(--color-cloud);
+}
+
+.app-header {
+  display: flex;
+  height: var(--space-64);
+  align-items: center;
+  padding-inline: var(--space-24);
+  border-bottom: var(--border-width) solid var(--color-hairline);
+  background: var(--color-paper);
+}
+
+.app-header a {
+  color: var(--color-ink-navy);
+  font-weight: var(--font-weight-bold);
+  text-decoration: none;
+}
+
+.app-main {
+  width: min(100% - var(--space-32), var(--content-max));
+  margin-inline: auto;
+  padding-block: var(--space-48);
+}
+
+.app-panel {
+  max-width: var(--panel-default-max);
+  margin-inline: auto;
+  padding: var(--space-24);
+  border: var(--border-width) solid var(--color-hairline);
+  border-radius: var(--radius-panel);
+  background: var(--color-paper);
+  box-shadow: var(--shadow-card);
+}
+
+.route-panel,
+.async-view {
+  max-width: var(--panel-wide-max);
+}
+
+.async-view {
+  margin-block: var(--space-48);
+}
+
+.login-form {
+  display: grid;
+  gap: var(--space-8);
+  margin-top: var(--space-24);
+}
+
+input {
+  min-height: var(--control-height);
+  padding: var(--space-10) var(--space-12);
+  border: var(--border-width) solid var(--color-hairline);
+  border-radius: var(--radius-control);
+  background: var(--color-pebble);
+  color: var(--color-ink-navy);
+  font: inherit;
+}
+
+input:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: var(--focus-width) solid var(--color-focus-ring);
+  outline-offset: var(--space-4);
+}
+
+.app-primary-button {
+  min-height: var(--control-height);
+  margin-top: var(--space-8);
+  border: var(--space-0);
+  border-radius: var(--radius-control);
+  background: var(--color-signal-blue);
+  color: var(--color-paper);
+  cursor: pointer;
+  font: inherit;
+  font-weight: var(--font-weight-semibold);
+}
+
+.app-primary-button:disabled {
+  background: var(--color-slate-gray);
+  cursor: not-allowed;
+}
+
+.unsupported-device-view {
+  text-align: center;
+}
+
+@media (max-width: 47.9375rem) {
+  .app-header {
+    padding-inline: var(--space-16);
+  }
+
+  .app-main {
+    width: min(100% - var(--space-24), var(--content-max));
+    padding-block: var(--space-24);
+  }
+
+  .app-panel {
+    padding: var(--space-24) var(--space-16);
+  }
+
+  h1 {
+    font-size: var(--space-32);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto;
+    transition-duration: var(--space-0);
+  }
+}

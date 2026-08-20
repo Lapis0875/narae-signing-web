@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "build": "tsc -b && vite build",
-    "lint": "biome check ."
+    "lint": "biome lint ."
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",
@@ -35,6 +35,9 @@
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "jsdom": "latest",
+    "react-doctor": "0.9.12",
+    "react-grab": "0.2.0",
+    "react-scan": "0.5.7",
     "typescript": "7.0.2",
     "vite": "8.2.2",
     "vitest": "4.1.11"
