@@ -14,20 +14,24 @@
     "lint": "biome check ."
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.101.4",
     "@vitejs/plugin-react": "latest",
     "class-variance-authority": "latest",
     "clsx": "latest",
     "lucide-react": "latest",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "react-router-dom": "^7.18.2",
     "tailwind-merge": "latest",
-    "tailwindcss": "4.3.3"
+    "tailwindcss": "4.3.3",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@biomejs/biome": "latest",
+    "@playwright/test": "1.62.1",
+    "@tailwindcss/vite": "latest",
     "@testing-library/jest-dom": "latest",
     "@testing-library/react": "latest",
-    "@tailwindcss/vite": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "jsdom": "latest",
