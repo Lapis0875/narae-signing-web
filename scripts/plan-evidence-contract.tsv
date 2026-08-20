@@ -6,7 +6,7 @@ todo	branch	start_condition	ordinary_pathspecs_json	document_selectors_json	rout
 5	chore/foundation	baseline commit exists	["frontend/**"]	[]	[]	5
 6	chore/foundation	baseline commit exists	[".github/workflows/ci.yml","scripts/verify-workflows.sh","README.md"]	[]	[]	6
 7	feat/security-auth	chore/foundation merged	["backend/src/**/crypto/**","backend/src/test/**/crypto/**"]	[]	[]	7
-8	feat/security-auth	chore/foundation merged	["backend/src/**/admin/**","backend/src/test/**/admin/**"]	[]	[]	9
+8	feat/security-auth	chore/foundation merged	["backend/src/**/admin/**","backend/src/test/**/admin/**","backend/build.gradle.kts","scripts/plan-evidence-contract.tsv"]	[]	[]	9
 9	feat/security-auth	chore/foundation merged	["backend/src/**/security/**","backend/src/**/session/**","backend/src/test/**/security/**","backend/src/test/**/session/**"]	["docs/plan/IMPLEMENTATION_PLAN.md::## 10. 보안, 개인정보, 남용 방어"]	[]	8
 10	feat/security-auth	chore/foundation merged	["backend/src/**/auth/**","backend/src/test/**/auth/**"]	["docs/plan/IMPLEMENTATION_PLAN.md::### 7.1 API 공통 규칙"]	[]	10
 11	feat/security-auth	chore/foundation merged	["frontend/src/features/auth/**","frontend/src/routes/LoginRoute.tsx","frontend/src/routes/AdminRouteGuard.tsx","frontend/e2e/admin-auth.spec.ts"]	[]	[{"path":"frontend/src/routes/AppRouter.tsx","start_marker":"// TODO11_AUTH_ROUTES_START","end_marker":"// TODO11_AUTH_ROUTES_END"}]	11
