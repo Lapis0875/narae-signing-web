@@ -32,6 +32,9 @@ spring:
   config:
     activate:
       on-profile: production
+  session:
+    jdbc:
+      initialize-schema: never
 
 app:
   public-origin: ${APP_PUBLIC_ORIGIN:}
