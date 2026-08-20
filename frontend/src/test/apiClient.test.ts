@@ -45,6 +45,6 @@ describe("apiRequest", () => {
       }),
     )
     const requestInit = fetchSpy.mock.lastCall?.[1]
-    expect(new Headers(requestInit?.headers).get("X-CSRF-TOKEN")).toBe("test-csrf")
+    expect(new Headers(requestInit?.headers).get("X-XSRF-TOKEN")).toBe("test-csrf")
   })
 })
