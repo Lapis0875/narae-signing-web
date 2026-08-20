@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Verify frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install chromium webkit
+          npm exec biome lint .
+          npm exec -- tsc -b --pretty false
+          npm run test
+          npm run build
+          npx playwright test --project=chromium --project=webkit --grep '@route-shell'
+
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - name: Verify backend, integration tests, and Flyway migrations
+        working-directory: backend
+        run: ./gradlew check integrationTest
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose syntax and resources with generated local values
+        run: |
+          ci_root=$(mktemp -d)
+          ci_project="narae-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker compose -p "$ci_project" -f infra/compose/compose.yml down --volumes --remove-orphans || true; rm -rf "$ci_root"' EXIT
+          mkdir -p "$ci_root/secrets"
+          dd if=/dev/zero of="$ci_root/secrets/master.key" bs=32 count=1 status=none
+          export POSTGRES_DB=ci_database
+          export POSTGRES_USER=ci_user
+          export POSTGRES_PASSWORD=ci-generated-postgres-password
+          export MINIO_ROOT_USER=ci-generated-user
+          export MINIO_ROOT_PASSWORD=ci-generated-minio-password
+          export APP_MINIO_BUCKET=ci-generated-bucket
+          export APP_PUBLIC_ORIGIN=https://signing.example.invalid
+          export APP_CRYPTO_KEY_VERSION=1
+          export NARAE_DATA_ROOT="$ci_root"
+          export FRONTEND_PORT=8080
+          docker compose -p "$ci_project" -f infra/compose/compose.yml config --quiet
+          COMPOSE_FILE=infra/compose/compose.yml COMPOSE_PROJECT_NAME="$ci_project" ./scripts/test-compose-resources.sh
+
+  workflow-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/verify-workflows.sh .github/workflows/ci.yml

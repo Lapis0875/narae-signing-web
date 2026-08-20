@@ -1,0 +1,53 @@
+spring:
+  application:
+    name: narae-signing-backend
+  profiles:
+    default: local
+
+server:
+  forward-headers-strategy: none
+
+app:
+  public-origin: http://localhost:5173
+  minio-endpoint: http://localhost:9000
+  minio-bucket: narae-signing-local
+  minio-access-key: local
+  minio-secret-key: local-password
+  master-key-file: ./local-only-master-key
+  crypto-key-version: 1
+  trusted-frontend-ip: 127.0.0.1
+
+---
+spring:
+  config:
+    activate:
+      on-profile: test
+
+app:
+  public-origin: http://localhost.test
+  minio-endpoint: http://minio.test
+  minio-bucket: narae-signing-test
+  minio-access-key: test
+  minio-secret-key: test-password
+  master-key-file: /synthetic/test/master-key
+  crypto-key-version: 1
+  trusted-frontend-ip: 127.0.0.1
+
+---
+spring:
+  config:
+    activate:
+      on-profile: production
+  session:
+    jdbc:
+      initialize-schema: never
+
+app:
+  public-origin: ${APP_PUBLIC_ORIGIN:}
+  minio-endpoint: ${APP_MINIO_ENDPOINT:}
+  minio-bucket: ${APP_MINIO_BUCKET:}
+  minio-access-key: ${APP_MINIO_ACCESS_KEY:}
+  minio-secret-key: ${APP_MINIO_SECRET_KEY:}
+  master-key-file: ${APP_MASTER_KEY_FILE:}
+  crypto-key-version: ${APP_CRYPTO_KEY_VERSION:0}
+  trusted-frontend-ip: ${NARAE_TRUSTED_FRONTEND_IP:}

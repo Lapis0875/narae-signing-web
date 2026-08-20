@@ -1,0 +1,123 @@
+name: narae-signing
+
+services:
+  frontend:
+    build:
+      context: ../..
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    cpus: 0.25
+    mem_limit: 256m
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      ingress: {}
+      private:
+        ipv4_address: 172.30.0.10
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: ../../backend
+    restart: unless-stopped
+    cpus: 2.5
+    mem_limit: 5g
+    environment:
+      SPRING_PROFILES_ACTIVE: production
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:?set POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      APP_PUBLIC_ORIGIN: ${APP_PUBLIC_ORIGIN:?set APP_PUBLIC_ORIGIN}
+      APP_MINIO_ENDPOINT: http://minio:9000
+      APP_MINIO_BUCKET: ${APP_MINIO_BUCKET:?set APP_MINIO_BUCKET}
+      APP_MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      APP_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+      APP_MASTER_KEY_FILE: /run/secrets/master.key
+      APP_CRYPTO_KEY_VERSION: ${APP_CRYPTO_KEY_VERSION:?set APP_CRYPTO_KEY_VERSION}
+      NARAE_TRUSTED_FRONTEND_IP: 172.30.0.10
+    volumes:
+      - ${NARAE_DATA_ROOT:-/srv/narae-signing}/secrets/master.key:/run/secrets/master.key:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    networks:
+      private:
+        ipv4_address: 172.30.0.20
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  postgres:
+    image: postgres:17.6-alpine
+    restart: unless-stopped
+    cpus: 0.5
+    mem_limit: 1g
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - ${NARAE_DATA_ROOT:-/srv/narae-signing}/postgres:/var/lib/postgresql/data
+    networks:
+      private:
+        ipv4_address: 172.30.0.30
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data
+    restart: unless-stopped
+    cpus: 0.5
+    mem_limit: 1g
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+    volumes:
+      - ${NARAE_DATA_ROOT:-/srv/narae-signing}/minio:/data
+    networks:
+      private:
+        ipv4_address: 172.30.0.40
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    restart: "no"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+      APP_MINIO_BUCKET: ${APP_MINIO_BUCKET:?set APP_MINIO_BUCKET}
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" >/dev/null && mc mb --ignore-existing \"local/$$APP_MINIO_BUCKET\""]
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks: [private]
+
+networks:
+  ingress: {}
+  private:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

@@ -1,0 +1,42 @@
+{
+  "name": "narae-signing-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc -b && vite build",
+    "lint": "biome check ."
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.101.4",
+    "@vitejs/plugin-react": "latest",
+    "class-variance-authority": "latest",
+    "clsx": "latest",
+    "lucide-react": "latest",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-router-dom": "^7.18.2",
+    "tailwind-merge": "latest",
+    "tailwindcss": "4.3.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "latest",
+    "@playwright/test": "1.62.1",
+    "@tailwindcss/vite": "latest",
+    "@testing-library/jest-dom": "latest",
+    "@testing-library/react": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "jsdom": "latest",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
+  }
+}
