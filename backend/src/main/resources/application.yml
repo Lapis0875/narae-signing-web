@@ -1,0 +1,41 @@
+spring:
+  application:
+    name: narae-signing-backend
+  profiles:
+    default: local
+
+server:
+  forward-headers-strategy: native
+
+app:
+  public-origin: http://localhost:5173
+  minio-endpoint: http://localhost:9000
+  minio-bucket: narae-signing-local
+  master-key-file: ./local-only-master-key
+  crypto-key-version: 1
+
+---
+spring:
+  config:
+    activate:
+      on-profile: test
+
+app:
+  public-origin: http://localhost.test
+  minio-endpoint: http://minio.test
+  minio-bucket: narae-signing-test
+  master-key-file: /synthetic/test/master-key
+  crypto-key-version: 1
+
+---
+spring:
+  config:
+    activate:
+      on-profile: production
+
+app:
+  public-origin: ${APP_PUBLIC_ORIGIN:}
+  minio-endpoint: ${APP_MINIO_ENDPOINT:}
+  minio-bucket: ${APP_MINIO_BUCKET:}
+  master-key-file: ${APP_MASTER_KEY_FILE:}
+  crypto-key-version: ${APP_CRYPTO_KEY_VERSION:0}
