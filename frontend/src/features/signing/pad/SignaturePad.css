@@ -1,0 +1,42 @@
+.signature-pad {
+  /* Functional render value: wire-contract ink stays exact black. */
+  --signature-pad-ink: #000000;
+}
+
+.signature-pad__canvas {
+  display: block;
+  width: 100%;
+  height: calc(var(--space-48) * 5);
+  touch-action: none;
+  background: var(--color-paper);
+  border: var(--border-width) solid var(--color-hairline);
+  border-radius: var(--radius-control);
+}
+
+.signature-pad__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+  min-inline-size: 0;
+  margin-block-start: var(--space-8);
+}
+
+.signature-pad__action {
+  flex: 1 1 calc(var(--space-48) * 2);
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  padding-inline: var(--space-16);
+  overflow-wrap: break-word;
+  white-space: normal;
+}
+
+.signature-pad-harness__toggle {
+  max-inline-size: 100%;
+  padding-inline: var(--space-16);
+  white-space: normal;
+}
+
+.signature-pad__status {
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+}
