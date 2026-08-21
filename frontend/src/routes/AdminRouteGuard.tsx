@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useRef, useState } from "react"
 import { Navigate, Outlet, useNavigate } from "react-router-dom"
 import { ApiError } from "../api/errors.ts"
+import { AppHeaderActions } from "../components/AppShell.tsx"
 import { ErrorView, ForbiddenView, LoadingView } from "../components/AsyncViews.tsx"
 import {
   authSessionQueryKey,
@@ -54,28 +55,33 @@ export function AdminRouteGuard() {
   return (
     <>
       <SessionExpiryNotice expiresAt={session.data.expiresAt} />
-      <button
-        disabled={isLoggingOut}
-        onClick={async () => {
-          setIsLoggingOut(true)
-          setLogoutFailed(false)
-          try {
-            await logout()
-            queryClient.clear()
-            navigate("/login", { replace: true })
-          } catch (error) {
-            setIsLoggingOut(false)
-            if (error instanceof ApiError) {
-              setLogoutFailed(true)
-            } else {
-              throw error
-            }
-          }
-        }}
-        type="button"
-      >
-        {isLoggingOut ? "로그아웃 중" : "로그아웃"}
-      </button>
+      <AppHeaderActions>
+        <nav aria-label="관리자 세션" className="board-admin-session-actions">
+          <button
+            className="board-button"
+            disabled={isLoggingOut}
+            onClick={async () => {
+              setIsLoggingOut(true)
+              setLogoutFailed(false)
+              try {
+                await logout()
+                queryClient.clear()
+                navigate("/login", { replace: true })
+              } catch (error) {
+                setIsLoggingOut(false)
+                if (error instanceof ApiError) {
+                  setLogoutFailed(true)
+                } else {
+                  throw error
+                }
+              }
+            }}
+            type="button"
+          >
+            {isLoggingOut ? "로그아웃 중" : "로그아웃"}
+          </button>
+        </nav>
+      </AppHeaderActions>
       {logoutFailed ? <p role="alert">로그아웃하지 못했습니다. 다시 시도해 주세요.</p> : null}
       <Outlet />
     </>
