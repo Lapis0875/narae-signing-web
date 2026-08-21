@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.naraesigning.NaraeSigningApplication;
+import com.naraesigning.crypto.VersionedCryptoService;
 import jakarta.servlet.http.Cookie;
 import java.sql.DriverManager;
 import java.sql.Timestamp;
@@ -19,6 +20,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.CountDownLatch;
@@ -437,6 +439,11 @@ class LoginApiTest {
         @Primary
         MutableClock mutableClock() {
             return new MutableClock();
+        }
+
+        @Bean
+        VersionedCryptoService versionedCryptoService() {
+            return new VersionedCryptoService(Map.of(1, new byte[32]), 1);
         }
     }
 
