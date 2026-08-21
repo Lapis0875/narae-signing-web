@@ -20,6 +20,7 @@ dependencies {
     implementation("org.flywaydb:flyway-database-postgresql")
     implementation("io.minio:minio:8.5.17")
     implementation("org.apache.commons:commons-fileupload2-jakarta-servlet6:2.0.0-M5")
+    implementation("org.apache.poi:poi-ooxml:5.4.1")
     runtimeOnly("org.postgresql:postgresql")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.testcontainers:junit-jupiter:1.21.3")

@@ -164,11 +164,12 @@ docs/
 
 ### 5.5 명단 가져오기
 
-- CSV/XLSX 파일은 프런트엔드가 행 데이터로 해석하고, 서버에는 JSON 행만 보낸다. 원본 파일은 보관하지 않는다.
+- 프런트엔드는 붙여 넣기 JSON이나 CSV/XLSX 파일을 제출할 수 있지만, 모든 JSON/CSV/XLSX의 파싱과 검증은 서버가 수행한다. 원본 파일은 보관하지 않는다.
 - CSV/XLSX는 첫 시트 첫 행에 소속사, 직책, 이름 순서의 정확한 헤더가 있어야 한다.
 - CSV는 UTF-8과 쉼표 구분만 허용한다. 다른 인코딩·구분자·추가 열·다른 시트는 거절한다.
-- 붙여 넣기 데이터는 같은 헤더 행이 있으면 건너뛰고, 없으면 첫 행부터 데이터로 읽는다.
+- 붙여 넣기 JSON도 서버가 필드 수와 행 구조를 검사하며, CSV/XLSX 헤더 규칙을 클라이언트 판단에 맡기지 않는다.
 - 원본 입력은 1 MiB 이하, 반영 대상은 최대 50행이다.
+- 소속사·직책·이름은 각각 최대 200 Unicode 코드 포인트이며, 허용 범위 안의 문자열은 공백·대소문자·Unicode 조합을 정규화하지 않고 그대로 보존한다.
 - 서버가 이름 누락·정확 일치 중복·행 수·상태 제약을 전체 검사한다. 하나라도 실패하면 정상 행도 반영하지 않고 오류 행을 돌려준다.
 
 ## 6. 백엔드 모듈과 데이터 모델
@@ -258,8 +259,10 @@ docs/
 | 상세·제목 | GET, PATCH /api/v1/admin/boards/:boardId |
 | 배경 업로드·교체 | POST /api/v1/admin/boards/:boardId/background |
 | 새 이미지 비율 맞춤 | POST /api/v1/admin/boards/:boardId/canvas/adopt-background-ratio |
-| 명단 조회·개별 편집 | GET, POST, PATCH, DELETE /api/v1/admin/boards/:boardId/roster |
-| 명단 일괄 반영 | PUT /api/v1/admin/boards/:boardId/roster/import |
+| 명단 조회·개별 추가 | GET, POST /api/v1/admin/boards/:boardId/roster |
+| 명단 개별 수정·삭제 | PATCH, DELETE /api/v1/admin/boards/:boardId/roster/:entryId |
+| 붙여넣기/JSON 명단 일괄 반영 | PUT /api/v1/admin/boards/:boardId/roster |
+| CSV/XLSX 명단 가져오기 | multipart POST /api/v1/admin/boards/:boardId/roster/import |
 | 슬롯 배치·수정·삭제 | PATCH, DELETE /api/v1/admin/boards/:boardId/slots/:slotId |
 | 서명 초기화 | POST /api/v1/admin/boards/:boardId/slots/:slotId/reset-signature |
 | 상태 전환 | POST /api/v1/admin/boards/:boardId/open, close, reopen |
@@ -271,8 +274,9 @@ docs/
 - URL의 :boardId는 실제 구현에서 UUID 경로 변수다.
 - API의 `설정 중`·`서명 진행` 표시는 각각 DB의 `DRAFT`·`OPEN` 상태를 경계에서 변환한 값이며, 클라이언트가 내부 상태를 지정하지 않는다.
 - open 요청은 제목, 최소 한 배치 슬롯, 모든 명단의 배치 완료를 다시 검사한다.
-- 일괄 명단 교체는 설정 중에서만 허용한다. 서명 진행 중에는 한 명씩 추가·수정·제거 규칙만 허용한다.
-- 완료 서명자의 정보 수정·삭제는 먼저 서명을 초기화한 뒤에만 허용한다.
+- 붙여넣기 행과 JSON은 서버의 `PUT /roster`, UTF-8 쉼표 CSV와 단일 시트 XLSX는 서버의 multipart `POST /roster/import`에서만 파싱하며 모두 전체 성공 또는 전체 실패로 반영한다.
+- 일괄 명단 교체는 설정 중(`DRAFT`)에서만 허용하고, 바이트가 정확히 같은 기존 인원은 UUID와 슬롯 상태를 유지한다. 서명 진행(`OPEN`) 중에는 미제출 인원에 한해 `POST` 추가와 `PATCH` 수정, `DELETE` 제거만 허용한다.
+- 제출 완료 인원의 정보 수정·삭제는 먼저 서명을 초기화한 뒤에만 허용한다.
 - 슬롯 삭제는 현재 서명을 지우고 명단 사람을 미배정 상태로 돌린다.
 
 ### 7.4 공개 서명 API
