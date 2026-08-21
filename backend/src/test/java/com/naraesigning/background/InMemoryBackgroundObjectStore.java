@@ -25,6 +25,6 @@ final class InMemoryBackgroundObjectStore implements BackgroundObjectStore {
         objects.remove(objectKey);
     }
 
-    byte[] get(String key) { return Arrays.copyOf(objects.get(key), objects.get(key).length); }
+    @Override public byte[] get(String key) { return Arrays.copyOf(objects.get(key), objects.get(key).length); }
     Set<String> keys() { return Set.copyOf(objects.keySet()); }
 }

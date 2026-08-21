@@ -1,6 +1,7 @@
 package com.naraesigning.board.api;
 
 import com.naraesigning.background.BackgroundAssetView;
+import com.naraesigning.background.BackgroundContent;
 import com.naraesigning.background.CanvasChange;
 import com.naraesigning.board.core.BoardOwner;
 import com.naraesigning.board.core.BoardShare;
@@ -10,6 +11,7 @@ import com.naraesigning.slot.Slot;
 import com.naraesigning.slot.SlotBackground;
 import com.naraesigning.slot.SlotBounds;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 interface BoardAdminFacade {
@@ -25,6 +27,9 @@ interface BoardAdminFacade {
     BoardShare reissueShare(BoardOwner owner, UUID boardId);
     BackgroundAssetView replaceBackground(BoardOwner owner, UUID boardId, byte[] bytes, String mimeType,
             CanvasChange change);
+    default Optional<BackgroundContent> currentBackground(BoardOwner owner, UUID boardId) {
+        return Optional.empty();
+    }
     BoardView open(BoardOwner owner, UUID boardId);
     BoardView close(BoardOwner owner, UUID boardId);
     BoardView reopen(BoardOwner owner, UUID boardId);

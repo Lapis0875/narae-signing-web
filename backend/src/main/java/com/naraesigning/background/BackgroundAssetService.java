@@ -4,6 +4,7 @@ import com.naraesigning.crypto.CryptoContext;
 import com.naraesigning.crypto.VersionedCryptoService;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.transaction.support.TransactionOperations;
 
@@ -52,6 +53,27 @@ public final class BackgroundAssetService {
         } finally {
             Arrays.fill(objectKeyBytes, (byte) 0);
             Arrays.fill(normalizedBytes, (byte) 0);
+        }
+    }
+
+    public Optional<BackgroundContent> current(UUID boardId) {
+        return repository.current(boardId).map(this::read);
+    }
+
+    private BackgroundContent read(StoredBackgroundAsset asset) {
+        byte[] objectKey = null;
+        byte[] envelope = null;
+        byte[] plaintext = null;
+        try {
+            objectKey = crypto.decrypt(asset.encryptedObjectKey(),
+                    CryptoContext.field("background-asset", asset.id().toString(), "object-key"));
+            envelope = objects.get(new String(objectKey, StandardCharsets.UTF_8));
+            plaintext = BackgroundCipherEnvelope.decrypt(envelope, crypto, asset.id());
+            return new BackgroundContent(plaintext, asset.mimeType());
+        } finally {
+            if (objectKey != null) Arrays.fill(objectKey, (byte) 0);
+            if (envelope != null) Arrays.fill(envelope, (byte) 0);
+            if (plaintext != null) Arrays.fill(plaintext, (byte) 0);
         }
     }
 
