@@ -180,15 +180,20 @@ describe("administrator board workflow", () => {
   it("exports the exact public-signer handoff module", async () => {
     // Given
     setViewport(1024)
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ status: "ready" }), {
-      headers: { "Content-Type": "application/json" },
-    }))
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ state: "OPEN", title: "서명하기" }), {
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ state: "SUBMITTED" }), {
+        headers: { "Content-Type": "application/json" },
+      }))
 
     // When
     renderHandoff("/sign/share-1", "/sign/:shareToken", <PublicSignerRoute />)
 
     // Then
     expect(await screen.findByRole("heading", { name: "서명하기" })).toBeInTheDocument()
-    expect(screen.getByTestId("signer-canvas")).toBeInTheDocument()
+    expect(screen.getByTestId("public-signer-complete")).toBeInTheDocument()
+    expect(screen.queryByTestId("signer-canvas")).not.toBeInTheDocument()
   })
 })

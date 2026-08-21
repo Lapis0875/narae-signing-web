@@ -6,7 +6,7 @@ function subscribe(onStoreChange: () => void): () => void {
 }
 
 function supportsSigning(): boolean {
-  return window.innerWidth >= 768
+  return Math.min(window.innerWidth, window.innerHeight) >= 600
 }
 
 export function useTabletSupport(): boolean {

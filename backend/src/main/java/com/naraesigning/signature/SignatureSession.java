@@ -5,8 +5,8 @@ import jakarta.servlet.http.HttpSession;
 import java.time.Instant;
 import java.util.UUID;
 
-record SignatureSession(SignerSessionContract.Value value, boolean active) {
-    static SignatureSession from(HttpSession session, Instant now) {
+public record SignatureSession(SignerSessionContract.Value value, boolean active) {
+    public static SignatureSession from(HttpSession session, Instant now) {
         if (session == null) throw SignatureSubmitException.sessionExpired();
         try {
             var value = new SignerSessionContract.Value(

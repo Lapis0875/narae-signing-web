@@ -43,6 +43,20 @@ final class JdbcPublicIdentifyRepository implements PublicIdentifyRepository {
                 boardId, linkVersion, identityHmac));
     }
 
+    @Override
+    public Optional<SignerRecord> findSigner(UUID boardId, UUID slotId) {
+        return Optional.ofNullable(jdbc.query("""
+                select b.id board_id, b.status board_status, b.share_link_version,
+                       b.canvas_width, b.canvas_height, r.submitted,
+                       s.id slot_id, s.placement_status, s.slot_revision, s.width, s.height
+                from board b
+                join roster_entry r on r.board_id = b.id
+                join signature_slot s on s.roster_entry_id = r.id
+                where b.id = ? and s.id = ?
+                """, resultSet -> resultSet.next() ? signer(resultSet) : null,
+                boardId, slotId));
+    }
+
     private static SignerRecord signer(ResultSet resultSet) throws SQLException {
         return new SignerRecord(
                 resultSet.getObject("board_id", UUID.class),

@@ -1,0 +1,42 @@
+.public-signer {
+  display: grid;
+  gap: var(--space-16);
+  min-inline-size: 0;
+}
+
+.public-signer__form {
+  display: grid;
+  gap: var(--space-8);
+  margin-block-start: var(--space-24);
+}
+
+.public-signer__action {
+  padding-inline: var(--space-16);
+}
+
+.public-signer__message {
+  min-height: var(--space-24);
+  margin-block: var(--space-16) var(--space-0);
+  color: var(--color-slate-gray);
+}
+
+.public-signer__intro {
+  width: 100%;
+}
+
+.public-signer__retention {
+  margin-block-end: var(--space-0);
+  padding: var(--space-16);
+  border-radius: var(--radius-control);
+  background: var(--color-pebble);
+  color: var(--color-slate-gray);
+}
+
+.public-signer__proportional-pad {
+  display: contents;
+}
+
+.public-signer__proportional-pad .signature-pad__canvas {
+  height: auto;
+  aspect-ratio: var(--public-signer-signature-aspect);
+}

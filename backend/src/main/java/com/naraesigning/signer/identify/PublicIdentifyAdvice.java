@@ -4,7 +4,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-@RestControllerAdvice(assignableTypes = PublicIdentifyController.class)
+@RestControllerAdvice(assignableTypes = {
+        PublicIdentifyController.class,
+        PublicSigningSessionController.class
+})
 final class PublicIdentifyAdvice {
     @ExceptionHandler(PublicIdentifyException.class)
     ResponseEntity<PublicIdentifyError> identifyError(PublicIdentifyException exception) {

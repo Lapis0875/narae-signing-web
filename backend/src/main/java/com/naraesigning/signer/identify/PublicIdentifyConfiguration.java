@@ -33,4 +33,9 @@ class PublicIdentifyConfiguration {
             PublicIdentifyRateLimiter limiter) {
         return new PublicIdentifyService(links, crypto, limiter);
     }
+
+    @Bean
+    PublicSigningSessionService publicSigningSessionService(PublicIdentifyRepository repository) {
+        return new PublicSigningSessionService(repository);
+    }
 }
