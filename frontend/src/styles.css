@@ -90,6 +90,9 @@ label {
 }
 
 .app-header {
+  position: sticky;
+  z-index: 1;
+  inset-block-start: var(--space-0);
   display: flex;
   height: var(--space-64);
   align-items: center;

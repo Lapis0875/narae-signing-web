@@ -1,0 +1,198 @@
+.board-workflow .board-button,
+.board-admin-session-actions .board-button,
+.board-workflow dialog button {
+  display: inline-flex;
+  min-height: var(--control-height);
+  align-items: center;
+  justify-content: center;
+  margin: var(--space-0);
+  padding: var(--space-10) var(--space-16);
+  border: var(--border-width) solid var(--color-hairline);
+  border-radius: var(--radius-control);
+  background: var(--color-paper);
+  color: var(--color-ink-navy);
+  cursor: pointer;
+  font: inherit;
+  font-weight: var(--font-weight-semibold);
+  text-decoration: none;
+}
+
+.board-workflow .board-button:hover,
+.board-admin-session-actions .board-button:hover,
+.board-workflow dialog button:hover {
+  background: var(--color-pebble);
+}
+
+.board-workflow .board-button--primary,
+.board-workflow .board-button--primary:hover {
+  border-color: var(--color-signal-blue);
+  background: var(--color-signal-blue);
+  color: var(--color-paper);
+}
+
+.board-workflow .board-button--destructive,
+.board-workflow dialog button:last-of-type {
+  border-color: var(--color-ink-navy);
+  background: var(--color-ink-navy);
+  color: var(--color-paper);
+}
+
+.board-workflow .board-button--destructive:hover,
+.board-workflow dialog button:last-of-type:hover {
+  background: var(--color-slate-gray);
+}
+
+.board-workflow .board-button:disabled,
+.board-admin-session-actions .board-button:disabled,
+.board-workflow dialog button:disabled {
+  border-color: var(--color-hairline);
+  background: var(--color-pebble);
+  color: var(--color-slate-gray);
+  cursor: not-allowed;
+}
+
+.board-workflow .board-button:focus-visible,
+.board-admin-session-actions .board-button:focus-visible,
+.board-workflow .board-textarea:focus-visible,
+.board-workflow dialog button:focus-visible {
+  outline: var(--focus-width) solid var(--color-focus-ring);
+  outline-offset: var(--space-4);
+}
+
+.board-workflow .board-textarea {
+  box-sizing: border-box;
+  min-height: calc(var(--control-height) + var(--space-64));
+  min-inline-size: var(--space-0);
+  padding: var(--space-12);
+  border: var(--border-width) solid var(--color-hairline);
+  border-radius: var(--radius-control);
+  background: var(--color-pebble);
+  color: var(--color-ink-navy);
+  font: inherit;
+  resize: vertical;
+}
+
+.board-workflow dialog {
+  position: fixed;
+  inset: var(--space-0);
+  max-width: var(--panel-default-max);
+  margin: auto;
+  padding: var(--space-24);
+  border: var(--border-width) solid var(--color-hairline);
+  border-radius: var(--radius-control);
+  background: var(--color-paper);
+  color: var(--color-ink-navy);
+}
+
+.board-workflow dialog button + button {
+  margin-inline-start: var(--space-8);
+}
+
+.board-form,
+.board-import,
+.board-list,
+.roster-list {
+  display: grid;
+  gap: var(--space-8);
+}
+
+.board-import,
+.board-list,
+.roster-list {
+  gap: var(--space-16);
+}
+
+.board-actions,
+.board-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+  align-items: center;
+}
+
+.board-links {
+  gap: var(--space-16);
+}
+
+.board-section-spaced {
+  margin-block-end: var(--space-24);
+}
+
+.board-list,
+.roster-list {
+  padding: var(--space-0);
+  margin: var(--space-0);
+  list-style: none;
+}
+
+.roster-list {
+  grid-template-columns: repeat(auto-fit, minmax(min(var(--page-min), 100%), 1fr));
+}
+
+.board-card {
+  padding: var(--space-16);
+  border: var(--border-width) solid var(--color-hairline);
+  border-radius: var(--radius-control);
+}
+
+.board-card-title {
+  margin: var(--space-0);
+}
+
+.board-section-title {
+  margin: var(--space-0);
+  font-size: var(--font-size-heading);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-heading);
+}
+
+.board-marker-list {
+  padding: var(--space-16);
+}
+
+.board-file-field {
+  position: relative;
+  display: grid;
+  min-inline-size: var(--space-0);
+  gap: var(--space-8);
+}
+
+.board-file-input {
+  position: absolute;
+  inline-size: var(--border-width);
+  block-size: var(--border-width);
+  overflow: hidden;
+  opacity: var(--space-0);
+}
+
+.board-file-trigger {
+  inline-size: fit-content;
+}
+
+.board-file-input:focus-visible + .board-file-trigger {
+  outline: var(--focus-width) solid var(--color-focus-ring);
+  outline-offset: var(--space-4);
+}
+
+.board-file-name {
+  min-inline-size: var(--space-0);
+  overflow-wrap: anywhere;
+  color: var(--color-slate-gray);
+}
+
+.app-header-actions {
+  display: flex;
+  min-inline-size: var(--space-0);
+  align-items: center;
+  margin-inline-start: auto;
+}
+
+.board-admin-session-actions {
+  display: flex;
+  min-inline-size: var(--space-0);
+  align-items: center;
+}
+
+.board-keep-together {
+  white-space: nowrap;
+}

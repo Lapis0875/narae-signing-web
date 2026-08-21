@@ -18,11 +18,22 @@ const errorMessages = {
 const apiErrorSchema = z.object({
   code: z.string(),
 });
+const apiErrorDetailsSchema = z.object({
+  errors: z.array(z.strictObject({
+    code: z.string().min(1).max(64).regex(/^[A-Z][A-Z0-9_]*$/u),
+    row: z.number().int().nonnegative().max(50),
+  })).max(50),
+});
 
 export type ApiErrorCode = keyof typeof errorMessages;
+export type ApiErrorDetail = {
+  readonly code: string;
+  readonly row: number;
+};
 
 export class ApiError extends Error {
   readonly code: ApiErrorCode;
+  readonly details: readonly ApiErrorDetail[];
   readonly retryAfterSeconds: number | null;
   readonly status: number;
 
@@ -31,10 +42,12 @@ export class ApiError extends Error {
     message: string,
     status: number,
     retryAfterSeconds: number | null = null,
+    details: readonly ApiErrorDetail[] = [],
   ) {
     super(message);
     this.name = "ApiError";
     this.code = code;
+    this.details = details;
     this.retryAfterSeconds = retryAfterSeconds;
     this.status = status;
   }
@@ -108,6 +121,7 @@ export async function apiErrorFromResponse(
     }
   }
   const parsed = apiErrorSchema.safeParse(body);
+  const parsedDetails = apiErrorDetailsSchema.safeParse(body);
   const code = parsed.success
     ? codeFromBackend(parsed.data.code, response.status)
     : codeFromStatus(response.status);
@@ -117,6 +131,7 @@ export async function apiErrorFromResponse(
     errorMessages[code],
     response.status,
     retryAfterSeconds(response),
+    parsedDetails.success ? parsedDetails.data.errors : [],
   );
 }
 
