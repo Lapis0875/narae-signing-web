@@ -17,7 +17,9 @@ final class PublicTokenResponseFilter extends OncePerRequestFilter {
     protected void doFilterInternal(
             HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        if (request.getRequestURI().startsWith("/api/v1/public/links/")) {
+        var path = request.getRequestURI();
+        if (path.startsWith("/api/v1/public/links/")
+                || path.equals("/api/v1/public/signing-session")) {
             response.setHeader("Cache-Control", "no-store, private");
             response.setHeader("Referrer-Policy", "no-referrer");
         }

@@ -8,6 +8,8 @@ interface PublicIdentifyRepository {
     Optional<LinkRecord> findLink(UUID boardId, int linkVersion);
 
     Optional<SignerRecord> findSigner(UUID boardId, int linkVersion, byte[] identityHmac);
+
+    Optional<SignerRecord> findSigner(UUID boardId, UUID slotId);
 }
 
 record LinkRecord(UUID boardId, String title, String status, int linkVersion, byte[] lookupHash) {

@@ -234,5 +234,10 @@ class PublicIdentifyHttpTest {
                     "PLACED".equals(placement) ? new BigDecimal("0.50") : null,
                     1920, 1080));
         }
+
+        @Override
+        public Optional<SignerRecord> findSigner(UUID boardId, UUID slotId) {
+            return Optional.empty();
+        }
     }
 }

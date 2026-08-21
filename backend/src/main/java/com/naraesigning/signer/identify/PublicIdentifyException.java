@@ -22,6 +22,10 @@ final class PublicIdentifyException extends RuntimeException {
         return new PublicIdentifyException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", 0);
     }
 
+    static PublicIdentifyException sessionExpired() {
+        return new PublicIdentifyException(HttpStatus.UNAUTHORIZED, "SIGNER_SESSION_EXPIRED", 0);
+    }
+
     static PublicIdentifyException rateLimited(int retryAfterSeconds) {
         return new PublicIdentifyException(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED", retryAfterSeconds);
     }
