@@ -8,7 +8,7 @@ const signatureSchema = z.strictObject({
   version: z.literal(1),
 })
 const slotSchema = z.strictObject({
-  background: z.enum(["TRANSPARENT", "WHITE"]),
+  background: z.enum(["transparent", "white"]),
   height: z.number().positive(),
   id: z.uuid(),
   signature: signatureSchema.nullable(),

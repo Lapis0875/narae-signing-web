@@ -38,6 +38,41 @@ it("renders one control-free main landmark", async () => {
   expect(screen.queryByRole("link")).not.toBeInTheDocument()
 })
 
+it("renders a snapshot slot with the lowercase API background contract", async () => {
+  // Given
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => input.toString().endsWith("/background")
+    ? new Response(null, { status: 204 })
+    : new Response(JSON.stringify({
+      backgroundPresent: false,
+      boardId,
+      canvasHeight: 600,
+      canvasWidth: 800,
+      slots: [{
+        background: "transparent",
+        height: 0.2,
+        id: "00000000-0000-4000-8000-000000000002",
+        signature: null,
+        width: 0.3,
+        x: 0.1,
+        y: 0.2,
+      }],
+    }), { headers: { "Content-Type": "application/json" } }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+  // When
+  const { container } = render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[`/boards/${boardId}/full`]}>
+        <Routes><Route element={<FullViewRoute />} path="/boards/:boardId/full" /></Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  await screen.findByRole("img", { name: "서명 보드 전체보기" })
+
+  // Then
+  expect(container.querySelector('[data-background="transparent"]')).toBeInTheDocument()
+})
+
 it("keeps loading after the snapshot resolves until the background resolves", async () => {
   // Given
   let resolveBackground = (_response: Response) => {}

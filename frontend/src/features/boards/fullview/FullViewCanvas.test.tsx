@@ -14,7 +14,7 @@ describe("full view canvas", () => {
       canvasHeight: 600,
       canvasWidth: 800,
       slots: [{
-        background: "WHITE" as const,
+        background: "white" as const,
         height: 0.2,
         id: "00000000-0000-4000-8000-000000000002",
         signature: null,
