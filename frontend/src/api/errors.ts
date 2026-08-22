@@ -2,9 +2,16 @@ import { z } from "zod";
 
 const errorMessages = {
   AUTHENTICATION_FAILED: "로그인에 실패했습니다. 입력 정보를 확인해 주세요.",
+  BACKGROUND_UNAVAILABLE: "배경을 처리할 수 없습니다. 잠시 후 다시 시도해 주세요.",
   BOARD_CLOSED: "현재 서명을 진행할 수 없습니다.",
   CSRF_INVALID: "요청을 확인할 수 없습니다. 페이지를 새로고침해 주세요.",
   CSRF_MISSING: "보안 토큰이 없습니다. 페이지를 새로고침해 주세요.",
+  INVALID_CLIENT_IP: "접속 환경을 확인할 수 없습니다.",
+  LOGIN_RATE_LIMITED: "로그인에 실패했습니다. 입력 정보를 확인해 주세요.",
+  MALFORMED_RESPONSE: "서버 응답을 확인할 수 없습니다.",
+  ROSTER_INVALID: "명단 입력을 확인해 주세요.",
+  ROSTER_UNAVAILABLE: "명단을 변경할 수 없습니다.",
+  SERVICE_UNAVAILABLE: "서비스에 연결할 수 없습니다.",
   SIGNER_STALE: "서명 정보를 다시 입력해 주세요.",
   FORBIDDEN: "접근 권한이 없습니다.",
   LINK_INVALID: "이 링크에서는 서명을 진행할 수 없습니다.",
@@ -17,6 +24,7 @@ const errorMessages = {
 
 const apiErrorSchema = z.object({
   code: z.string(),
+  requestId: z.string().optional(),
 });
 const apiErrorDetailsSchema = z.object({
   errors: z.array(z.strictObject({
@@ -36,6 +44,7 @@ export class ApiError extends Error {
   readonly details: readonly ApiErrorDetail[];
   readonly retryAfterSeconds: number | null;
   readonly status: number;
+  readonly requestId: string | null;
 
   constructor(
     code: ApiErrorCode,
@@ -43,6 +52,7 @@ export class ApiError extends Error {
     status: number,
     retryAfterSeconds: number | null = null,
     details: readonly ApiErrorDetail[] = [],
+    requestId: string | null = null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -50,6 +60,7 @@ export class ApiError extends Error {
     this.details = details;
     this.retryAfterSeconds = retryAfterSeconds;
     this.status = status;
+    this.requestId = requestId;
   }
 }
 
@@ -57,17 +68,26 @@ function codeFromBackend(code: string, status: number): ApiErrorCode {
   switch (code) {
     case "AUTHENTICATION_FAILED":
       return "AUTHENTICATION_FAILED";
+    case "BACKGROUND_UNAVAILABLE":
+      return "BACKGROUND_UNAVAILABLE";
     case "board_closed":
       return "BOARD_CLOSED";
     case "csrf_invalid":
       return "CSRF_INVALID";
+    case "INVALID_CLIENT_IP":
+      return "INVALID_CLIENT_IP";
     case "link_invalid":
       return "LINK_INVALID";
     case "LOGIN_RATE_LIMITED":
+      return "LOGIN_RATE_LIMITED";
     case "rate_limited":
       return "RATE_LIMITED";
     case "signer_stale":
       return "SIGNER_STALE";
+    case "ROSTER_INVALID":
+      return "ROSTER_INVALID";
+    case "ROSTER_UNAVAILABLE":
+      return "ROSTER_UNAVAILABLE";
     default:
       return codeFromStatus(status);
   }
@@ -85,6 +105,10 @@ function codeFromStatus(status: number): ApiErrorCode {
       return "CONFLICT";
     case 429:
       return "RATE_LIMITED";
+    case 502:
+    case 503:
+    case 504:
+      return "SERVICE_UNAVAILABLE";
     default:
       return "UNKNOWN";
   }
@@ -126,13 +150,31 @@ export async function apiErrorFromResponse(
     ? codeFromBackend(parsed.data.code, response.status)
     : codeFromStatus(response.status);
 
+  const requestIdValue = parsed.success ? parsed.data.requestId : undefined;
+  const requestId = safeRequestId(requestIdValue) ?? safeRequestId(response.headers.get("X-Request-ID"));
+
   return new ApiError(
     code,
     errorMessages[code],
     response.status,
     retryAfterSeconds(response),
     parsedDetails.success ? parsedDetails.data.errors : [],
+    requestId,
   );
+}
+
+function safeRequestId(value: string | null | undefined): string | null {
+  return value !== undefined && value !== null && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(value)
+    ? value
+    : null;
+}
+
+export function malformedResponseError(requestId: string | null): ApiError {
+  return new ApiError("MALFORMED_RESPONSE", errorMessages.MALFORMED_RESPONSE, 200, null, [], requestId);
+}
+
+export function serviceUnavailableError(): ApiError {
+  return new ApiError("SERVICE_UNAVAILABLE", errorMessages.SERVICE_UNAVAILABLE, 0);
 }
 
 export function missingCsrfError(): ApiError {

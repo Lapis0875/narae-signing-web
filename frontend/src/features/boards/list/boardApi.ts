@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { apiRequest } from "../../../api/client.ts"
+import { parsedApiRequest } from "../../../api/client.ts"
 
 export const boardSchema = z.strictObject({
   canvasHeight: z.number().int().positive(),
@@ -23,18 +23,18 @@ export type Board = z.infer<typeof boardSchema>
 export const boardListQueryKey = ["admin", "boards"] as const
 
 export async function fetchBoards(): Promise<readonly Board[]> {
-  return boardListSchema.parse(await apiRequest("/api/v1/admin/boards"))
+  return parsedApiRequest("/api/v1/admin/boards", boardListSchema)
 }
 
 export async function fetchBoard(boardId: string): Promise<Board> {
-  return boardSchema.parse(await apiRequest(`/api/v1/admin/boards/${boardId}`))
+  return parsedApiRequest(`/api/v1/admin/boards/${boardId}`, boardSchema)
 }
 
 export async function createBoard(title: string): Promise<Board> {
-  const created = createdBoardSchema.parse(await apiRequest("/api/v1/admin/boards", {
+  const created = await parsedApiRequest("/api/v1/admin/boards", createdBoardSchema, {
     body: JSON.stringify({ title }),
     headers: { "Content-Type": "application/json" },
     method: "POST",
-  }))
+  })
   return created.board
 }

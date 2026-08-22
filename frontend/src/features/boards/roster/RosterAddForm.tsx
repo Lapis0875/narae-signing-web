@@ -2,23 +2,23 @@ import type { RosterIdentity } from "./rosterApi.ts"
 
 type RosterAddFormProps = {
   readonly disabled: boolean
-  readonly onAdd: (identity: RosterIdentity) => void
+  readonly onAdd: (identity: RosterIdentity) => Promise<boolean>
 }
 
 export function RosterAddForm({ disabled, onAdd }: RosterAddFormProps) {
   return (
     <form
       className="board-form board-section-spaced"
-      onSubmit={(event) => {
+      onSubmit={async (event) => {
         event.preventDefault()
         const form = event.currentTarget
         const values = new FormData(form)
-        onAdd({
+        const saved = await onAdd({
           job: values.get("job")?.toString() ?? "",
           name: values.get("name")?.toString() ?? "",
           organization: values.get("organization")?.toString() ?? "",
         })
-        form.reset()
+        if (saved) form.reset()
       }}
     >
       <h2 className="board-section-title">명단 직접 추가</h2>

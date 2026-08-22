@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { apiRequest, setCsrfToken } from "../../api/client.ts"
+import { apiRequest, parsedApiRequest, setCsrfToken } from "../../api/client.ts"
 
 const authenticatedSessionSchema = z.object({
   authenticated: z.literal(true),
@@ -44,16 +44,16 @@ async function csrfToken(): Promise<string> {
 }
 
 export async function fetchAuthSession(): Promise<AuthSession> {
-  return sessionSchema.parse(await apiRequest("/api/v1/auth/session"))
+  return parsedApiRequest("/api/v1/auth/session", sessionSchema)
 }
 
 export async function login(email: string, password: string): Promise<AuthenticatedSession> {
   const csrfCookieValue = await csrfToken()
-  const session = authenticatedSessionSchema.parse(await apiRequest("/api/v1/auth/login", {
+  const session = await parsedApiRequest("/api/v1/auth/login", authenticatedSessionSchema, {
     body: JSON.stringify({ email, password }),
     headers: { "Content-Type": "application/json", "X-XSRF-TOKEN": csrfCookieValue },
     method: "POST",
-  }))
+  })
   setCsrfToken(csrfTokenFromCookie())
   return session
 }

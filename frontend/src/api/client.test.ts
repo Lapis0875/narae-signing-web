@@ -245,4 +245,67 @@ describe("apiRequest error normalization", () => {
     );
     expect(fetchSpy).toHaveBeenCalledOnce();
   });
+
+  it("records only sanitized development diagnostics for a failed request", async () => {
+    // Given
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      code: "ROSTER_INVALID",
+      message: "private identity 한별",
+      requestId: "qa-request-32",
+    }), {
+      headers: { "Content-Type": "application/json" },
+      status: 400,
+    }));
+
+    // When
+    await apiRequest("/api/v1/admin/boards/11111111-1111-4111-8111-111111111111/roster", {
+      body: JSON.stringify({ name: "한별", password: "private-password" }),
+      method: "POST",
+    }).catch((error: unknown) => error);
+
+    // Then
+    expect(consoleSpy).toHaveBeenCalledWith("api_request_failed", {
+      code: "ROSTER_INVALID",
+      method: "POST",
+      requestId: "qa-request-32",
+      route: "/api/v1/admin/boards/:id/roster",
+      status: 400,
+    });
+    const diagnostic = JSON.stringify(consoleSpy.mock.calls);
+    expect(diagnostic).not.toContain("한별");
+    expect(diagnostic).not.toContain("private-password");
+  });
+
+  it("normalizes malformed success JSON with only the safe request ID", async () => {
+    // Given
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{", {
+      headers: { "Content-Type": "application/json", "X-Request-ID": "qa-malformed-32" },
+      status: 200,
+    }));
+
+    // When
+    const request = apiRequest("/api/v1/admin/boards");
+
+    // Then
+    await expect(request).rejects.toMatchObject({
+      code: "MALFORMED_RESPONSE",
+      requestId: "qa-malformed-32",
+      status: 200,
+    });
+  });
+
+  it("normalizes an unavailable network without exposing transport text", async () => {
+    // Given
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("private upstream host"));
+
+    // When
+    const request = apiRequest("/api/v1/admin/boards");
+
+    // Then
+    await expect(request).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE", status: 0 });
+    await expect(request).rejects.not.toMatchObject({ message: expect.stringContaining("private upstream") });
+  });
 });

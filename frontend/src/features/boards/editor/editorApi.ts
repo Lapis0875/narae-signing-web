@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { apiRequest } from "../../../api/client.ts"
+import { apiRequest, parsedApiRequest } from "../../../api/client.ts"
 import { apiErrorFromResponse } from "../../../api/errors.ts"
 import { boardSchema, type Board } from "../list/boardApi.ts"
 import { normalizedBoundsSchema, type Bounds } from "./geometry.ts"
@@ -32,7 +32,7 @@ export type Share = z.infer<typeof shareSchema>
 export type Background = z.infer<typeof backgroundSchema>
 
 export async function fetchBoardDetail(boardId: string): Promise<Board> {
-  return boardSchema.parse(await apiRequest(`/api/v1/admin/boards/${z.uuid().parse(boardId)}`))
+  return parsedApiRequest(`/api/v1/admin/boards/${z.uuid().parse(boardId)}`, boardSchema)
 }
 
 export async function fetchCurrentBackground(boardId: string): Promise<Blob | null> {
@@ -47,11 +47,11 @@ export async function fetchCurrentBackground(boardId: string): Promise<Blob | nu
 }
 
 export async function renameBoard(boardId: string, title: string): Promise<Board> {
-  return boardSchema.parse(await apiRequest(`/api/v1/admin/boards/${z.uuid().parse(boardId)}`, {
+  return parsedApiRequest(`/api/v1/admin/boards/${z.uuid().parse(boardId)}`, boardSchema, {
     body: JSON.stringify(z.strictObject({ title: z.string().min(1) }).parse({ title })),
     headers: { "Content-Type": "application/json" },
     method: "PATCH",
-  }))
+  })
 }
 
 export async function saveSlot(
@@ -67,10 +67,11 @@ export async function saveSlot(
     x: z.number(),
     y: z.number(),
   }).parse({ ...normalizedBoundsSchema.parse(bounds), background })
-  return slotResponseSchema.parse(await apiRequest(
+  return parsedApiRequest(
     `/api/v1/admin/boards/${z.uuid().parse(boardId)}/slots/${z.uuid().parse(slotId)}`,
+    slotResponseSchema,
     { body: JSON.stringify(body), headers: { "Content-Type": "application/json" }, method: "PATCH" },
-  ))
+  )
 }
 
 export async function unplaceSlot(boardId: string, slotId: string): Promise<void> {
@@ -81,14 +82,15 @@ export async function unplaceSlot(boardId: string, slotId: string): Promise<void
 }
 
 export async function fetchShare(boardId: string): Promise<Share> {
-  return shareSchema.parse(await apiRequest(`/api/v1/admin/boards/${z.uuid().parse(boardId)}/share`))
+  return parsedApiRequest(`/api/v1/admin/boards/${z.uuid().parse(boardId)}/share`, shareSchema)
 }
 
 export async function reissueShare(boardId: string): Promise<Share> {
-  return shareSchema.parse(await apiRequest(
+  return parsedApiRequest(
     `/api/v1/admin/boards/${z.uuid().parse(boardId)}/share/reissue`,
+    shareSchema,
     { method: "POST" },
-  ))
+  )
 }
 
 export async function uploadBackground(
@@ -101,18 +103,20 @@ export async function uploadBackground(
   body.append("file", file)
   body.append("adoptSourceRatio", String(adoptSourceRatio))
   body.append("confirmed", String(confirmed))
-  return backgroundSchema.parse(await apiRequest(
+  return parsedApiRequest(
     `/api/v1/admin/boards/${z.uuid().parse(boardId)}/background`,
+    backgroundSchema,
     { body, method: "POST" },
-  ))
+  )
 }
 
 export async function transitionBoard(
   boardId: string,
   action: "open" | "close" | "reopen",
 ): Promise<Board> {
-  return boardSchema.parse(await apiRequest(
+  return parsedApiRequest(
     `/api/v1/admin/boards/${z.uuid().parse(boardId)}/${action}`,
+    boardSchema,
     { method: "POST" },
-  ))
+  )
 }

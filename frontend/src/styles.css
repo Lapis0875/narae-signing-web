@@ -176,6 +176,30 @@ a:focus-visible {
   text-align: center;
 }
 
+.app-toast {
+  position: fixed;
+  z-index: 2;
+  pointer-events: none;
+  inset-inline-end: var(--space-24);
+  inset-block-end: var(--space-24);
+  max-inline-size: min(calc(100vw - var(--space-48)), var(--panel-default-max));
+  padding: var(--space-12) var(--space-16);
+  border: var(--border-width) solid var(--color-hairline);
+  border-radius: var(--radius-control);
+  background: var(--color-paper);
+  color: var(--color-ink-navy);
+  box-shadow: var(--shadow-card);
+  font-size: var(--font-size-label);
+  line-height: var(--line-height-body);
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+  word-break: keep-all;
+}
+
+.app-toast:empty {
+  display: none;
+}
+
 @media (max-width: 47.9375rem) {
   .app-header {
     padding-inline: var(--space-16);
@@ -192,6 +216,12 @@ a:focus-visible {
 
   h1 {
     font-size: var(--space-32);
+  }
+
+  .app-toast {
+    inset-inline-end: var(--space-16);
+    inset-block-end: var(--space-16);
+    max-inline-size: calc(100vw - var(--space-32));
   }
 }
 

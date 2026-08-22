@@ -4,6 +4,7 @@ import com.naraesigning.board.core.BoardOwner;
 import com.naraesigning.board.core.BoardUnavailableException;
 import com.naraesigning.session.AdminSessionContract;
 import com.naraesigning.session.SessionCookieActions;
+import com.naraesigning.web.RequestCorrelationFilter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -54,6 +55,7 @@ final class AdminBoardFilter extends OncePerRequestFilter {
                 session.invalidate();
                 cookies.logoutAdmin(request, response);
             }
+            RequestCorrelationFilter.errorCode(request, "UNAUTHORIZED");
             write(response, HttpServletResponse.SC_UNAUTHORIZED, UNAUTHORIZED);
             return;
         }
@@ -63,6 +65,7 @@ final class AdminBoardFilter extends OncePerRequestFilter {
         } catch (BoardUnavailableException exception) {
             session.invalidate();
             cookies.logoutAdmin(request, response);
+            RequestCorrelationFilter.errorCode(request, "UNAUTHORIZED");
             write(response, HttpServletResponse.SC_UNAUTHORIZED, UNAUTHORIZED);
             return;
         }
@@ -72,6 +75,7 @@ final class AdminBoardFilter extends OncePerRequestFilter {
             try {
                 facade.authorize(owner, UUID.fromString(matcher.group(1)));
             } catch (BoardUnavailableException exception) {
+                RequestCorrelationFilter.errorCode(request, "BOARD_UNAVAILABLE");
                 write(response, HttpServletResponse.SC_NOT_FOUND, UNAVAILABLE);
                 return;
             }

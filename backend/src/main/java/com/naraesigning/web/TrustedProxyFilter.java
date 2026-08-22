@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE)
+@Order(Ordered.HIGHEST_PRECEDENCE + 1)
 final class TrustedProxyFilter extends OncePerRequestFilter {
     private static final Set<String> FORWARDED = Set.of(
             "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip", "x-narae-client-ip");
@@ -31,9 +31,11 @@ final class TrustedProxyFilter extends OncePerRequestFilter {
         var trusted = request.getRemoteAddr().equals(properties.trustedFrontendIp());
         var clientIps = Collections.list(request.getHeaders("X-Narae-Client-IP"));
         var proto = request.getHeader("X-Forwarded-Proto");
-        if ((!trusted && !clientIps.isEmpty()) || clientIps.size() > 1
-                || (clientIps.size() == 1 && !InetAddresses.isInetAddress(clientIps.getFirst()))
-                || (trusted && proto != null && !proto.equals("http") && !proto.equals("https"))) {
+        var invalidClientIp = (!trusted && !clientIps.isEmpty()) || clientIps.size() > 1
+                || (clientIps.size() == 1 && !InetAddresses.isInetAddress(clientIps.getFirst()));
+        if (invalidClientIp || (trusted && proto != null && !proto.equals("http") && !proto.equals("https"))) {
+            RequestCorrelationFilter.errorCode(
+                    request, invalidClientIp ? "INVALID_CLIENT_IP" : "INVALID_PROXY_HEADERS");
             response.sendError(400);
             return;
         }

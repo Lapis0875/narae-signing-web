@@ -1,5 +1,6 @@
 package com.naraesigning.auth;
 
+import com.naraesigning.web.RequestCorrelationFilter;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -9,6 +10,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 final class AuthApiAdvice {
     @ExceptionHandler(AuthApiException.class)
     ResponseEntity<AuthError> authError(AuthApiException exception, HttpServletRequest request) {
+        RequestCorrelationFilter.errorCode(request, exception.code());
         return ResponseEntity.status(exception.status())
                 .body(new AuthError(
                         exception.code(),
