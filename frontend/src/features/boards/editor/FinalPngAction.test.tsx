@@ -18,7 +18,7 @@ describe("FinalPngAction", () => {
   it("Given a failed download When idle Then it retries only after an explicit click and uses no stale bytes", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(null, { status: 503 }))
-      .mockResolvedValueOnce(new Response(new Blob(["fresh"]), {
+      .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), {
         headers: { "Content-Type": "image/png" },
         status: 200,
       }))
