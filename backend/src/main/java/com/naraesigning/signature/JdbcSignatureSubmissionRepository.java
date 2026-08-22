@@ -4,6 +4,7 @@ import com.naraesigning.slot.CanonicalAspect;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcOperations;
 import org.springframework.transaction.support.TransactionOperations;
@@ -29,7 +30,7 @@ final class JdbcSignatureSubmissionRepository implements SignatureSubmissionRepo
                         where id = ? and encrypted_strokes is null and strokes_nonce is null
                             and strokes_key_version is null and submitted_at is null
                         """, encrypted.ciphertext(), encrypted.nonce(), encrypted.keyVersion(),
-                        submittedAt, slotId));
+                        Timestamp.from(submittedAt), slotId));
                 requireSingleUpdate(jdbc.update("""
                         update roster_entry set submitted = true, updated_at = current_timestamp
                         where id = ? and submitted = false
