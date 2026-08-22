@@ -1,0 +1,16 @@
+import { defineConfig, devices } from "@playwright/test"
+
+export default defineConfig({
+  outputDir: process.env.TASK30_PLAYWRIGHT_OUTPUT,
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    { name: "webkit", use: { ...devices["Desktop Safari"] } },
+  ],
+  testDir: process.env.TASK30_E2E_DIR,
+  use: {
+    baseURL: process.env.TASK30_MVP_BASE_URL,
+    screenshot: "off",
+    trace: "off",
+    video: "off",
+  },
+})
