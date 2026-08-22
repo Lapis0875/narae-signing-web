@@ -124,18 +124,40 @@ test("creates a board and keeps the server roster snapshot through import errors
   const pendingCreateRoutes: Route[] = []
   let roster: readonly Record<string, unknown>[] = []
   const browserErrors: string[] = []
+  const expectedApiDiagnostics: string[] = []
+  const expectedBrowserNoise: string[] = []
   const expectedNetworkErrors: string[] = []
   page.on("console", (message) => {
     if (message.type() === "error") {
       if (/^Failed to load resource: the server responded with a status of (400 \(Bad Request\)|409 \(Conflict\))$/u.test(message.text())) {
         expectedNetworkErrors.push(message.text())
+      } else if (/^api_request_failed \{code: (?:UNKNOWN|MALFORMED_RESPONSE|CONFLICT|SERVICE_UNAVAILABLE), method: (?:GET|POST), requestId: null, route: \/api\/v1\/(?:admin\/boards|admin\/boards\/:id\/roster\/import|public\/(?:links\/:token|signing-session)), status: (?:0|200|400|409)\}$/u.test(message.text())) {
+        expectedApiDiagnostics.push(message.text())
+      } else if (message.text() === "ResizeObserver loop completed with undelivered notifications.") {
+        expectedBrowserNoise.push(message.text())
       } else {
         browserErrors.push(message.text())
       }
     }
   })
-  page.on("pageerror", (error) => browserErrors.push(error.message))
+  page.on("pageerror", (error) => {
+    if (error.message === "ResizeObserver loop completed with undelivered notifications.") {
+      expectedBrowserNoise.push(error.message)
+    } else {
+      browserErrors.push(error.message)
+    }
+  })
   await context.addCookies([{ name: "XSRF-TOKEN", value: "csrf-test", url: "http://127.0.0.1:4173" }])
+  await page.addInitScript(() => {
+    class QaEventSource {
+      onerror: (() => void) | null = null
+      onopen: (() => void) | null = null
+
+      addEventListener() {}
+      close() {}
+    }
+    Object.defineProperty(window, "EventSource", { configurable: true, value: QaEventSource })
+  })
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request()
     const pathname = new URL(request.url()).pathname
@@ -166,8 +188,40 @@ test("creates a board and keeps the server roster snapshot through import errors
       })
       return
     }
-    if (pathname === "/api/v1/public/sign/safe-share") {
-      await route.fulfill({ json: { status: "ready" } })
+    if (pathname === `/api/v1/admin/boards/${boardId}/snapshot`) {
+      await route.fulfill({
+        json: {
+          backgroundPresent: false,
+          boardId,
+          canvasHeight: 600,
+          canvasWidth: 800,
+          slots: [{
+            background: "white",
+            height: 0.25,
+            id: "10000000-0000-4000-8000-000000000001",
+            signature: null,
+            width: 0.4,
+            x: 0.2,
+            y: 0.3,
+          }],
+        },
+      })
+      return
+    }
+    if (pathname === `/api/v1/admin/boards/${boardId}/background`) {
+      await route.fulfill({ status: 204 })
+      return
+    }
+    if (pathname === `/api/v1/admin/boards/${boardId}/share`) {
+      await route.fulfill({ json: { shareToken: "safe-share", version: 1 } })
+      return
+    }
+    if (pathname === "/api/v1/public/links/safe-share") {
+      await route.fulfill({ json: { state: "OPEN", title: "가을 서명 발표회" } })
+      return
+    }
+    if (pathname === "/api/v1/public/signing-session") {
+      await route.fulfill({ json: { state: "READY" } })
       return
     }
     if (pathname === `/api/v1/admin/boards/${boardId}/roster` && request.method() === "GET") {
@@ -308,10 +362,11 @@ test("creates a board and keeps the server roster snapshot through import errors
   }: CaptureRequest) => {
     const file = `${state}-${viewport.width}.png`
     const isUnsupportedPhone = state === "public-signer-handoff" && viewport.width === 375
-    const isAdminRoute = route.startsWith("/boards")
+    const isBareFullView = route.endsWith("/full")
+    const isAdminRoute = route.startsWith("/boards") && !isBareFullView
     const topElements = mode.kind === "top"
       ? await collectTopElementEvidence(page, viewport, {
-          header: !isUnsupportedPhone,
+          header: !isUnsupportedPhone && !isBareFullView,
           navigation: isAdminRoute,
           preserveFocus: mode.preserveFocus,
         })
@@ -474,9 +529,10 @@ test("creates a board and keeps the server roster snapshot through import errors
     await capture({ route: "/sign/safe-share", state: "public-signer-handoff", viewport })
   }
 
-  await writeFile(path.join(evidenceDir, "matrix-manifest.json"), `${JSON.stringify({ captures: matrix }, null, 2)}\n`)
+  await writeFile(path.join(evidenceDir, "matrix-manifest.json"), `${JSON.stringify({ captures: matrix, expectedApiDiagnostics, expectedBrowserNoise }, null, 2)}\n`)
   expect(matrix).toHaveLength(36)
   expect(captureHashes.size).toBe(36)
   expect(expectedNetworkErrors).toHaveLength(7)
+  expect(expectedApiDiagnostics.length).toBeGreaterThan(0)
   expect(browserErrors).toEqual([])
 })
