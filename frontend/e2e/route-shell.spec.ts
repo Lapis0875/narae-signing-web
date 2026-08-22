@@ -7,6 +7,7 @@ type AuthSessionResponse =
 type AuthSessionProbe = {
   readonly fulfilledBodies: AuthSessionResponse[];
   readonly requests: string[];
+  readonly unexpectedApiRequests: string[];
 };
 
 const authSessionPath = "/api/v1/auth/session";
@@ -45,7 +46,7 @@ async function mockApi(
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
-    if (pathname === authSessionPath) {
+    if (pathname === authSessionPath && request.method() === "GET") {
       probe.requests.push(route.request().url());
       if (sessionResponse !== undefined) {
         probe.fulfilledBodies.push(sessionResponse);
@@ -68,34 +69,49 @@ async function mockApi(
         body: JSON.stringify({ state: "READY" }),
       });
     }
-    if (pathname === "/api/v1/admin/boards") {
+    if (pathname === "/api/v1/admin/boards" && request.method() === "GET") {
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify([]),
       });
     }
-    if (pathname === `/api/v1/admin/boards/${boardId}`) {
+    if (
+      pathname === `/api/v1/admin/boards/${boardId}` &&
+      request.method() === "GET"
+    ) {
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(boardDetail),
       });
     }
-    if (pathname === `/api/v1/admin/boards/${boardId}/roster`) {
+    if (
+      pathname === `/api/v1/admin/boards/${boardId}/roster` &&
+      request.method() === "GET"
+    ) {
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify([]),
       });
     }
-    if (pathname === `/api/v1/admin/boards/${boardId}/share`) {
+    if (
+      pathname === `/api/v1/admin/boards/${boardId}/share` &&
+      request.method() === "GET"
+    ) {
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({ shareToken: "share-1", version: 1 }),
       });
     }
-    if (pathname === `/api/v1/admin/boards/${boardId}/background`) {
+    if (
+      pathname === `/api/v1/admin/boards/${boardId}/background` &&
+      request.method() === "GET"
+    ) {
       return route.fulfill({ status: 204 });
     }
-    if (pathname === `/api/v1/admin/boards/${boardId}/snapshot`) {
+    if (
+      pathname === `/api/v1/admin/boards/${boardId}/snapshot` &&
+      request.method() === "GET"
+    ) {
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({
@@ -107,6 +123,7 @@ async function mockApi(
         }),
       });
     }
+    probe.unexpectedApiRequests.push(`${request.method()} ${pathname}`);
     await route.fulfill({
       body: JSON.stringify({ code: "FIXTURE_UNEXPECTED_API" }),
       contentType: "application/json",
@@ -127,7 +144,11 @@ const routes = [
 test.describe("@route-shell", () => {
   test("fails closed for an unknown API request", async ({ page }) => {
     // Given
-    const probe: AuthSessionProbe = { fulfilledBodies: [], requests: [] };
+    const probe: AuthSessionProbe = {
+      fulfilledBodies: [],
+      requests: [],
+      unexpectedApiRequests: [],
+    };
     await mockApi(page, { authenticated: false, expiresAt: null }, probe);
     await page.goto("/login");
 
@@ -138,6 +159,33 @@ test.describe("@route-shell", () => {
 
     // Then
     expect(status).toBe(500);
+    expect(probe.unexpectedApiRequests).toEqual([
+      "GET /api/v1/fixture-unknown",
+    ]);
+  });
+
+  test("fails closed for a wrong method on a known API request", async ({
+    page,
+  }) => {
+    // Given
+    const probe: AuthSessionProbe = {
+      fulfilledBodies: [],
+      requests: [],
+      unexpectedApiRequests: [],
+    };
+    await mockApi(page, { authenticated: false, expiresAt: null }, probe);
+    await page.goto("/login");
+
+    // When
+    const status = await page.evaluate(async (path) => {
+      return (await fetch(path, { method: "POST" })).status;
+    }, `/api/v1/admin/boards/${boardId}/snapshot`);
+
+    // Then
+    expect(status).toBe(500);
+    expect(probe.unexpectedApiRequests).toEqual([
+      `POST /api/v1/admin/boards/${boardId}/snapshot`,
+    ]);
   });
 
   for (const route of routes) {
@@ -145,7 +193,19 @@ test.describe("@route-shell", () => {
       page,
     }, testInfo) => {
       // Given
-      const probe: AuthSessionProbe = { fulfilledBodies: [], requests: [] };
+      const probe: AuthSessionProbe = {
+        fulfilledBodies: [],
+        requests: [],
+        unexpectedApiRequests: [],
+      };
+      const consoleErrors: string[] = [];
+      const pageErrors: string[] = [];
+      page.on("console", (message) => {
+        if (message.type() === "error") {
+          consoleErrors.push(message.text());
+        }
+      });
+      page.on("pageerror", (error) => pageErrors.push(error.message));
       const sessionResponse =
         route.auth === "signed-out"
           ? { authenticated: false, expiresAt: null }
@@ -167,6 +227,13 @@ test.describe("@route-shell", () => {
       if (route.auth === "public") {
         await expect(page.getByTestId("signer-canvas")).toBeVisible();
         await page.waitForLoadState("networkidle");
+        await page.evaluate(async () => {
+          await new Promise<void>((resolve) =>
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            ),
+          );
+        });
       }
       if (route.auth === "signed-out") {
         expect(probe.requests).toHaveLength(1);
@@ -184,6 +251,11 @@ test.describe("@route-shell", () => {
         expect(probe.requests).toHaveLength(0);
         expect(probe.fulfilledBodies).toHaveLength(0);
       }
+      expect(probe.unexpectedApiRequests).toEqual([]);
+      if (route.auth === "public") {
+        expect(consoleErrors).toEqual([]);
+        expect(pageErrors).toEqual([]);
+      }
       await page.screenshot({
         path: testInfo.outputPath(
           `${route.path.replaceAll("/", "-") || "root"}.png`,
@@ -196,7 +268,11 @@ test.describe("@route-shell", () => {
     page,
   }, testInfo) => {
     // Given
-    const probe: AuthSessionProbe = { fulfilledBodies: [], requests: [] };
+    const probe: AuthSessionProbe = {
+      fulfilledBodies: [],
+      requests: [],
+      unexpectedApiRequests: [],
+    };
     await mockApi(page, undefined, probe);
     await page.setViewportSize({ height: 844, width: 390 });
 
@@ -208,6 +284,7 @@ test.describe("@route-shell", () => {
     await expect(page.getByTestId("signer-canvas")).toHaveCount(0);
     expect(probe.requests).toHaveLength(0);
     expect(probe.fulfilledBodies).toHaveLength(0);
+    expect(probe.unexpectedApiRequests).toEqual([]);
     await page.screenshot({
       path: testInfo.outputPath("phone-unsupported.png"),
     });

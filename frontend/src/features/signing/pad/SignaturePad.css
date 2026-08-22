@@ -1,6 +1,12 @@
 .signature-pad {
   /* Functional render value: wire-contract ink stays exact black. */
   --signature-pad-ink: #000000;
+  contain: inline-size;
+  inline-size: 100%;
+}
+
+.public-signer__proportional-pad .signature-pad {
+  contain: none;
 }
 
 .signature-pad__canvas {

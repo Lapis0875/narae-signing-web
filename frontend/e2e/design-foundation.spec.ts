@@ -82,19 +82,27 @@ test("captures every responsive visual-foundation state", async ({
     await page.route("**/api/v1/**", async (route) => {
       const request = route.request();
       const pathname = new URL(request.url()).pathname;
-      if (pathname === authSessionPath && apiMode === "loading") {
+      if (
+        pathname === authSessionPath &&
+        request.method() === "GET" &&
+        apiMode === "loading"
+      ) {
         await new Promise<void>((resolve) => {
           releaseLoading = resolve;
         });
       }
-      if (pathname === authSessionPath && apiMode === "generic-error") {
+      if (
+        pathname === authSessionPath &&
+        request.method() === "GET" &&
+        apiMode === "generic-error"
+      ) {
         await route.fulfill({
           body: JSON.stringify({}),
           contentType: "application/json",
         });
         return;
       }
-      if (pathname === authSessionPath) {
+      if (pathname === authSessionPath && request.method() === "GET") {
         await route.fulfill({
           body: JSON.stringify({ authenticated: false, expiresAt: null }),
           contentType: "application/json",
@@ -214,17 +222,10 @@ test("captures every responsive visual-foundation state", async ({
     await expect(page.getByTestId("signer-canvas")).toBeVisible();
     await settleVisualFrame(page);
     await page.screenshot({ path: testInfo.outputPath("signer-768x1024.png") });
-    await page.waitForLoadState("networkidle");
-    const unknownApiStatus = await page.evaluate(async () => {
-      return (await fetch("/api/v1/fixture-unknown")).status;
-    });
-    await settleVisualFrame(page);
-    expect(unknownApiStatus).toBe(500);
-    expect(unexpectedApiRequests).toEqual(["GET /api/v1/fixture-unknown"]);
+    expect(unexpectedApiRequests).toEqual([]);
     expect(consoleErrors).toEqual([
       "api_request_failed {code: FORBIDDEN, method: GET, requestId: null, route: /api/v1/auth/session, status: 403}",
       "api_request_failed {code: MALFORMED_RESPONSE, method: GET, requestId: null, route: /api/v1/auth/session, status: 200}",
-      "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
     ]);
     expect(pageErrors).toEqual([]);
     expect(externalRequests).toEqual([]);
