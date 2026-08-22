@@ -24,6 +24,8 @@
 .editor-panel h2 { margin-block: var(--space-0) var(--space-16); font-size: var(--font-size-heading); line-height: var(--line-height-heading); }
 .editor-roster-list { display: grid; gap: var(--space-8); margin: var(--space-0); padding: var(--space-0); list-style: none; }
 .editor-roster-list button { inline-size: 100%; }
+.editor-unplaced-entry { display: flex; gap: var(--space-8); }
+.editor-unplaced-drag { display: grid; place-items: center; min-inline-size: var(--space-32); cursor: grab; user-select: none; }
 .editor-file-field { display: grid; gap: var(--space-8); }
 .editor-file-field input { min-inline-size: var(--space-0); inline-size: 100%; }
 .editor-share-url { overflow-wrap: anywhere; color: var(--color-slate-gray); }

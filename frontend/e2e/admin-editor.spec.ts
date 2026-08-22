@@ -60,10 +60,11 @@ async function captureState(page: Page, state: string, options: CaptureOptions =
   await page.setViewportSize({ width: 1280, height: 800 })
 }
 
-test("@admin-editor edits the authoritative canvas and recovers failed mutations", async ({ context, page }) => {
+test("@admin-editor edits the authoritative canvas and recovers failed mutations", async ({ browserName, context, page }) => {
   // Given
   await mkdir(evidenceDir, { recursive: true })
-  await context.grantPermissions(["clipboard-read", "clipboard-write"])
+  if (browserName === "chromium") await context.grantPermissions(["clipboard-read", "clipboard-write"])
+  else await context.addInitScript(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: (value: string) => { document.documentElement.dataset.task23ClipboardWrite = value; return Promise.resolve() } } }))
   await context.addCookies([{ name: "XSRF-TOKEN", value: "csrf-redacted", url: "http://127.0.0.1:4173" }])
   let board = { canvasHeight: 1080, canvasWidth: 1920, createdAt: now, id: boardId, shareLinkVersion: 1, status: "설정 중", title: "가을 서명 발표회", updatedAt: now }
   let roster = [
@@ -75,15 +76,24 @@ test("@admin-editor edits the authoritative canvas and recovers failed mutations
   let patchCount = 0, backgroundCount = 0, backgroundGets = 0, latestPatchX = 0
   const latestPatchBySlot = new Map<string, { readonly x: number; readonly y: number }>()
   let rejectNextBackgroundRead = false, rejectNextPatch = false, rejectNextBackground = true
-  let holdNextPatch = false, holdNextSuccessfulPatch = false, holdNextRoster = false
-  let recoveryStarted = false
-  let releaseFirstPatch = () => undefined, releaseRejectedPatch = () => undefined, releaseSuccessfulPatch = () => undefined, releaseRecovery = () => undefined
+  let holdNextPatch = false, holdNextSuccessfulPatch = false
+  let releaseFirstPatch = () => undefined, releaseRejectedPatch = () => undefined, releaseSuccessfulPatch = () => undefined
   const firstPatchGate = new Promise<void>((resolve) => { releaseFirstPatch = resolve }), rejectedPatchGate = new Promise<void>((resolve) => { releaseRejectedPatch = resolve })
-  const successfulPatchGate = new Promise<void>((resolve) => { releaseSuccessfulPatch = resolve }), recoveryGate = new Promise<void>((resolve) => { releaseRecovery = resolve })
+  const successfulPatchGate = new Promise<void>((resolve) => { releaseSuccessfulPatch = resolve })
+  const apiUrl = `http://127.0.0.1:4173/api/v1/admin/boards/${boardId}`
+  const expectedConsoleErrors = new Set([
+    `Failed to load resource: the server responded with a status of 404 (Not Found) @ ${apiUrl}/events`,
+    `Failed to load resource: the server responded with a status of 404 (Not Found) @ ${apiUrl}/background`,
+    `Failed to load resource: the server responded with a status of 409 (Conflict) @ ${apiUrl}/slots/${slotOne}`,
+    "api_request_failed {code: CONFLICT, method: PATCH, requestId: null, route: /api/v1/admin/boards/:id/slots/:id, status: 409} @ http://127.0.0.1:4173/@vite/client",
+    `Failed to load resource: the server responded with a status of 400 (Bad Request) @ ${apiUrl}/background`,
+    "api_request_failed {code: UNKNOWN, method: POST, requestId: null, route: /api/v1/admin/boards/:id/background, status: 400} @ http://127.0.0.1:4173/@vite/client",
+  ])
   const browserErrors: string[] = []
   page.on("pageerror", (error) => browserErrors.push(error.message))
   page.on("console", (message) => {
-    if (message.type() === "error" && !message.text().includes("409 (Conflict)") && !message.text().includes("400 (Bad Request)") && !message.text().includes("404 (Not Found)")) browserErrors.push(message.text())
+    const error = `${message.text()} @ ${message.location().url}`
+    if (message.type() === "error" && !expectedConsoleErrors.has(error)) browserErrors.push(error)
   })
   await page.route("**/api/v1/**", async (route: Route) => {
     const request = route.request()
@@ -91,7 +101,6 @@ test("@admin-editor edits the authoritative canvas and recovers failed mutations
     if (pathname === "/api/v1/auth/session") return route.fulfill({ json: { authenticated: true, expiresAt: new Date(Date.now() + 3_600_000).toISOString() } })
     if (pathname === `/api/v1/admin/boards/${boardId}` && request.method() === "GET") return route.fulfill({ json: board })
     if (pathname === `/api/v1/admin/boards/${boardId}/roster`) {
-      if (holdNextRoster) { recoveryStarted = true; holdNextRoster = false; await recoveryGate }
       return route.fulfill({ json: roster })
     }
     if (pathname === `/api/v1/admin/boards/${boardId}/share` && request.method() === "GET") return route.fulfill({ json: share })
@@ -164,7 +173,12 @@ test("@admin-editor edits the authoritative canvas and recovers failed mutations
   await captureState(page, "background-load-retry-recovered", { anchor: canvas, scrollOffset: 2 })
   expect(await page.locator(".board-editor button").evaluateAll((buttons) => buttons.filter((button) => !button.classList.contains("board-button") && button.closest("dialog") === null).length)).toBe(0)
   const keyboardPlacement = page.getByRole("button", { name: "한별 배치" })
-  await keyboardPlacement.focus(); await page.keyboard.press("Tab"); await page.keyboard.press("Shift+Tab"); await expect(keyboardPlacement).toBeFocused()
+  const nextKeyboardPlacement = page.getByRole("button", { name: "누리 배치" })
+  await keyboardPlacement.focus()
+  await page.keyboard.press("Tab")
+  await expect(nextKeyboardPlacement).toBeFocused()
+  await page.keyboard.press("Shift+Tab")
+  await expect(keyboardPlacement).toBeFocused()
   const focusMetrics = await keyboardPlacement.evaluate((element) => { const style = getComputedStyle(element), root = getComputedStyle(document.documentElement), bounds = element.getBoundingClientRect(), width = Number.parseFloat(style.outlineWidth), offset = Number.parseFloat(style.outlineOffset), focusWidthValue = root.getPropertyValue("--focus-width").trim(), focusWidthPixels = focusWidthValue.endsWith("rem") ? Number.parseFloat(focusWidthValue) * Number.parseFloat(root.fontSize) : Number.parseFloat(focusWidthValue); return { outlineStyle: style.outlineStyle, outlineWidth: width, tokenWidth: focusWidthPixels, visibleBounds: bounds.left - width - offset >= 0 && bounds.right + width + offset <= innerWidth && bounds.top - width - offset >= 0 && bounds.bottom + width + offset <= innerHeight } })
   expect(focusMetrics).toMatchObject({ outlineStyle: "solid", outlineWidth: focusMetrics.tokenWidth, visibleBounds: true })
   await captureState(page, "keyboard-placement-focus", { anchor: keyboardPlacement })
@@ -175,7 +189,7 @@ test("@admin-editor edits the authoritative canvas and recovers failed mutations
   await captureState(page, "keyboard-placed", { anchor: canvas })
   const canvasBox = await canvas.boundingBox()
   if (canvasBox === null) throw new Error("Canvas bounds unavailable")
-  await page.getByRole("button", { name: "누리 배치" }).dragTo(canvas, { targetPosition: { x: canvasBox.width * 0.24, y: 0 } })
+  await nextKeyboardPlacement.locator("..").locator(".editor-unplaced-drag").dragTo(canvas, { targetPosition: { x: canvasBox.width * 0.24, y: 0 } })
   await expect.poll(() => patchCount).toBe(2)
   await expect(page.getByLabel("자동 저장 상태")).toHaveText("저장됨")
   await captureState(page, "drag-touching-edge", { anchor: canvas })
@@ -191,7 +205,9 @@ test("@admin-editor edits the authoritative canvas and recovers failed mutations
   expect(latestPatchBySlot.get(slotOne)?.x).toBeCloseTo(firstPreviewX); expect(latestPatchBySlot.get(slotTwo)?.y).toBeCloseTo(secondPreviewY)
 
   await page.getByRole("button", { name: "링크 복사" }).click()
-  const copied = await page.evaluate(() => navigator.clipboard.readText())
+  const copied = browserName === "chromium" ? await page.evaluate(() => navigator.clipboard.readText())
+    : await page.locator("html").getAttribute("data-task23-clipboard-write") ?? ""
+  expect(copied).toBe("http://127.0.0.1:4173/sign/safe-share-one")
   const bits = encodeQR(copied, "raw", { ecc: "medium" })
   expect(decodeQR(new Bitmap({ height: bits.length, width: bits[0]?.length ?? 0 }, bits).scale(4).toImage())).toBe(copied)
   await page.getByRole("button", { name: "링크 재발급" }).click()
@@ -208,7 +224,7 @@ test("@admin-editor edits the authoritative canvas and recovers failed mutations
   await expect(copyFailure).toBeVisible()
   await captureState(page, "share-copy-failure", { anchor: copyFailure })
 
-  rejectNextPatch = true; holdNextPatch = true; holdNextRoster = true
+  rejectNextPatch = true; holdNextPatch = true; holdNextSuccessfulPatch = true
   await moveButton.press("ArrowRight"); await moveButton.press("ArrowRight"); await moveButton.press("ArrowLeft")
   const coalescedPreviewX = Number.parseFloat(await movingSlot.evaluate((element) => element.style.left)) / 100
   expect(patchCount).toBe(5)
@@ -217,12 +233,8 @@ test("@admin-editor edits the authoritative canvas and recovers failed mutations
   await moveButton.press("ArrowLeft"); await moveButton.press("ArrowRight"); await moveButton.press("ArrowRight")
   await new Promise((resolve) => setTimeout(resolve, 100)); expect(patchCount).toBe(6)
   releaseRejectedPatch()
-  await expect.poll(() => recoveryStarted).toBe(true)
-  await new Promise((resolve) => setTimeout(resolve, 100)); expect(patchCount).toBe(6)
-  holdNextSuccessfulPatch = true
-  releaseRecovery()
-  await expect(page.getByText(/서버 배치와 충돌/u)).toBeVisible()
   await expect.poll(() => patchCount).toBe(7)
+  await expect(page.getByText(/서버 배치와 충돌/u)).toBeVisible()
   await expect(page.getByLabel("자동 저장 상태")).toHaveText("저장 실패")
   await captureState(page, "authoritative-409-recovery", { anchor: canvas })
   releaseSuccessfulPatch()

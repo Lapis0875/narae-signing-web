@@ -160,7 +160,10 @@ export function BoardEditorRoute({ actionExtensions }: BoardEditorRouteProps) {
               <h2 id="unplaced-title">미배치 명단</h2>
               <ul className="editor-roster-list">
                 {roster.data.filter((entry) => entry.slot.placementStatus === "UNPLACED").map((entry) => (
-                  <li key={entry.id}><button aria-label={`${entry.identity.name} 배치`} className="board-button" draggable onClick={() => queueSave(entry, defaultPlacement(roster.data.filter((candidate) => candidate.slot.placementStatus === "PLACED").length), "transparent")} onDragStart={(event: DragEvent<HTMLButtonElement>) => event.dataTransfer.setData("text/slot-id", entry.slot.id)} type="button">{entry.identity.name}</button></li>
+                  <li className="editor-unplaced-entry" key={entry.id}>
+                    <span aria-hidden="true" className="editor-unplaced-drag" draggable onDragStart={(event: DragEvent<HTMLSpanElement>) => event.dataTransfer.setData("text/slot-id", entry.slot.id)}>⠿</span>
+                    <button aria-label={`${entry.identity.name} 배치`} className="board-button" onClick={() => queueSave(entry, defaultPlacement(roster.data.filter((candidate) => candidate.slot.placementStatus === "PLACED").length), "transparent")} tabIndex={0} type="button">{entry.identity.name}</button>
+                  </li>
                 ))}
               </ul>
             </section>
