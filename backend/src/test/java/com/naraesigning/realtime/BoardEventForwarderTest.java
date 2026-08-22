@@ -17,7 +17,7 @@ final class BoardEventForwarderTest {
         var forwarder = new BoardEventForwarder(registry);
 
         for (var type : new String[] {
-                "background-updated", "board-updated", "layout-updated", "signature-reset"
+                "background-updated", "board-deleted", "board-updated", "layout-updated", "signature-reset"
         }) {
             forwarder.forward(new BoardMutationEvent(boardId, type));
             verify(registry).publish(boardId, type);
@@ -27,7 +27,7 @@ final class BoardEventForwarderTest {
     @Test
     void rejectsUnapprovedMutationTypes() {
         assertThatIllegalArgumentException().isThrownBy(
-                () -> new BoardMutationEvent(UUID.randomUUID(), "board-deleted"));
+                () -> new BoardMutationEvent(UUID.randomUUID(), "object-cleanup-failed"));
     }
 
     @Test
