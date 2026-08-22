@@ -60,7 +60,7 @@ export function RosterManagementPanel({ boardId, entries }: RosterManagementPane
   return (
     <section className="editor-panel editor-roster-management" aria-labelledby="roster-management-title">
       <h2 id="roster-management-title">명단 편집</h2>
-      {mutationError !== null ? <p aria-label="명단 유지 안내" role="alert">입력 내용을 반영하지 못했습니다. 표시된 서버 명단은 그대로 유지됩니다.</p> : null}
+      {mutationError !== null ? <p aria-label="명단 유지 안내" role="alert">입력 내용을 반영하지 못했습니다. 표시된 <span className="board-keep-together">서버 명단은</span> 그대로 유지됩니다.</p> : null}
       {serverMarkers.length > 0 ? (
         <ol aria-label="서버 입력 오류" role="alert">
           {serverMarkers.map((marker) => <li data-row={marker.row} key={`${marker.row}-${marker.message}`}>{marker.row === 0 ? "파일" : `${marker.row}행`}: {marker.message}</li>)}
