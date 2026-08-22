@@ -10,6 +10,7 @@ import com.naraesigning.board.core.BoardService;
 import com.naraesigning.board.core.BoardShare;
 import com.naraesigning.board.core.BoardView;
 import com.naraesigning.board.core.CreatedBoard;
+import com.naraesigning.realtime.BoardMutationEvent;
 import com.naraesigning.slot.Slot;
 import com.naraesigning.slot.SlotBackground;
 import com.naraesigning.slot.SlotBounds;
@@ -46,7 +47,11 @@ final class JdbcBoardAdminFacade implements BoardAdminFacade {
     @Override public CreatedBoard create(BoardOwner owner, String title) { return boards.create(owner, title); }
     @Override public BoardView detail(BoardOwner owner, UUID boardId) { return boards.detail(owner, boardId); }
     @Override public BoardView rename(BoardOwner owner, UUID boardId, String title) {
-        return boards.rename(owner, boardId, title);
+        return transactions.execute(status -> {
+            var renamed = boards.rename(owner, boardId, title);
+            publishAfterCommit(new BoardMutationEvent(boardId, "board-updated"));
+            return renamed;
+        });
     }
 
     @Override
@@ -54,7 +59,9 @@ final class JdbcBoardAdminFacade implements BoardAdminFacade {
             SlotBounds bounds, SlotBackground background) {
         return transactions.execute(status -> {
             requireEditable(owner, boardId);
-            return slots.updateVisual(boardId, slotId, bounds, background);
+            var updated = slots.updateVisual(boardId, slotId, bounds, background);
+            publishAfterCommit(new BoardMutationEvent(boardId, "layout-updated"));
+            return updated;
         });
     }
 
@@ -62,7 +69,9 @@ final class JdbcBoardAdminFacade implements BoardAdminFacade {
     public Slot deleteSlot(BoardOwner owner, UUID boardId, UUID slotId) {
         return transactions.execute(status -> {
             requireEditable(owner, boardId);
-            return slots.delete(boardId, slotId);
+            var deleted = slots.delete(boardId, slotId);
+            publishAfterCommit(new BoardMutationEvent(boardId, "layout-updated"));
+            return deleted;
         });
     }
 
@@ -70,7 +79,9 @@ final class JdbcBoardAdminFacade implements BoardAdminFacade {
     public Slot resetSignature(BoardOwner owner, UUID boardId, UUID slotId) {
         return transactions.execute(status -> {
             boards.detail(owner, boardId);
-            return slots.resetSignature(boardId, slotId);
+            var reset = slots.resetSignature(boardId, slotId);
+            publishAfterCommit(new BoardMutationEvent(boardId, "signature-reset"));
+            return reset;
         });
     }
 
@@ -87,10 +98,14 @@ final class JdbcBoardAdminFacade implements BoardAdminFacade {
     @Override
     public BackgroundAssetView replaceBackground(BoardOwner owner, UUID boardId, byte[] bytes,
             String mimeType, CanvasChange change) {
-        var board = boards.detail(owner, boardId);
-        if (!"설정 중".equals(board.status())) throw new BoardLifecycleException("BOARD_NOT_DRAFT");
-        return backgrounds.replace(boardId, bytes, mimeType,
-                new CanvasSize(board.canvasWidth(), board.canvasHeight()), change);
+        return transactions.execute(status -> {
+            var board = boards.detail(owner, boardId);
+            if (!"설정 중".equals(board.status())) throw new BoardLifecycleException("BOARD_NOT_DRAFT");
+            var replaced = backgrounds.replace(boardId, bytes, mimeType,
+                    new CanvasSize(board.canvasWidth(), board.canvasHeight()), change);
+            publishAfterCommit(new BoardMutationEvent(boardId, "background-updated"));
+            return replaced;
+        });
     }
 
     @Override public Optional<BackgroundContent> currentBackground(BoardOwner owner, UUID boardId) {
@@ -149,9 +164,9 @@ final class JdbcBoardAdminFacade implements BoardAdminFacade {
         }
     }
 
-    private void publishAfterCommit(BoardLifecycleEvent event) {
+    private void publishAfterCommit(Object event) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            throw new IllegalStateException("Lifecycle event requires transaction synchronization");
+            throw new IllegalStateException("Board event requires transaction synchronization");
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override public void afterCommit() { events.publishEvent(event); }

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useRef, useState, type DragEvent, type ReactNode } from "react"
+import { useCallback, useRef, useState, type DragEvent, type ReactNode } from "react"
 import { Link, useParams } from "react-router-dom"
 import { ApiError } from "../../../api/errors.ts"
 import { AppShell } from "../../../components/AppShell.tsx"
@@ -26,6 +26,7 @@ import { defaultPlacement, type Bounds } from "./geometry.ts"
 import { SerializedSaveQueue, type SaveState } from "./saveQueue.ts"
 import { useObjectUrl } from "./useObjectUrl.ts"
 import { RosterManagementPanel } from "./RosterManagementPanel.tsx"
+import { RealtimeBoardBridge } from "./RealtimeBoardBridge.tsx"
 import "../list/boardControls.css"
 import "./editor.css"
 
@@ -46,9 +47,9 @@ export function BoardEditorRoute({ actionExtensions }: BoardEditorRouteProps) {
   const share = useQuery({ queryFn: () => fetchShare(boardId), queryKey: ["admin", "boards", boardId, "share"] })
   const backgroundUrl = useObjectUrl(background.data)
 
-  const refreshSnapshot = async () => {
+  const refreshSnapshot = useCallback(async () => {
     await Promise.all([background.refetch(), board.refetch(), roster.refetch()])
-  }
+  }, [background.refetch, board.refetch, roster.refetch])
   const reportFailure = async (error: unknown) => {
     setSaveState("failed")
     await refreshSnapshot()
@@ -110,6 +111,7 @@ export function BoardEditorRoute({ actionExtensions }: BoardEditorRouteProps) {
 
   return (
     <AppShell>
+      <RealtimeBoardBridge boardId={boardId} refetchSnapshot={refreshSnapshot} />
       <main className="board-editor board-workflow">
         <h1 className="editor-route-title">{board.data.title}</h1>
         <BoardToolbar

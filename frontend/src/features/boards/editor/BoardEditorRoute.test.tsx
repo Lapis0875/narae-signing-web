@@ -62,6 +62,25 @@ function renderEditor(background: () => Response) {
 }
 
 describe("BoardEditorRoute", () => {
+  it("Given the editor When it mounts Then owner realtime refetch connects", async () => {
+    // Given
+    const connections: string[] = []
+    vi.stubGlobal("EventSource", class {
+      onerror: (() => void) | null = null
+      onopen: (() => void) | null = null
+      constructor(url: string) { connections.push(url) }
+      addEventListener() {}
+      close() {}
+    })
+
+    // When
+    renderEditor(() => new Response(null, { status: 204 }))
+    await screen.findByRole("application", { name: "서명 보드 캔버스" })
+
+    // Then
+    expect(connections).toContain(`/api/v1/admin/boards/${boardId}/events`)
+  })
+
   it("Given current background read failure When retry succeeds Then a safe blocking error recovers", async () => {
     let reads = 0
     renderEditor(() => reads++ === 0 ? json({ code: "OBJECT_KEY_MISSING", objectKey: "private/owner/board.png" }, 404) : new Response(null, { status: 204 }))
