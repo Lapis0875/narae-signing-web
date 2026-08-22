@@ -422,7 +422,7 @@ test("creates a board and keeps the server roster snapshot through import errors
     await expect(page.getByRole("heading", { level: 2, name: "명단 직접 추가" })).toHaveClass("board-section-title")
     await expect(page.getByRole("heading", { level: 2, name: "명단 가져오기" })).toHaveClass("board-section-title")
 
-    const deleteButton = page.getByRole("button", { name: "삭제" }).first()
+    const deleteButton = page.getByRole("button", { name: "삭제", exact: true }).first()
     await deleteButton.click()
     const dialog = page.getByRole("dialog", { name: "확인" })
     await expect(dialog).toContainText("선택한 명단을 삭제할까요?")
