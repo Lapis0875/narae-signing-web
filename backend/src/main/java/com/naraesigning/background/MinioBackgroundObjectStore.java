@@ -1,6 +1,7 @@
 package com.naraesigning.background;
 
 import io.minio.MinioClient;
+import io.minio.GetObjectArgs;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
 import java.io.ByteArrayInputStream;
@@ -12,6 +13,15 @@ final class MinioBackgroundObjectStore implements BackgroundObjectStore {
     MinioBackgroundObjectStore(MinioClient minio, String bucket) {
         this.minio = minio;
         this.bucket = bucket;
+    }
+
+    @Override
+    public byte[] get(String objectKey) {
+        try (var input = minio.getObject(GetObjectArgs.builder().bucket(bucket).object(objectKey).build())) {
+            return input.readAllBytes();
+        } catch (Exception exception) {
+            throw new BackgroundStoreException(exception);
+        }
     }
 
     @Override

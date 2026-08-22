@@ -2,6 +2,7 @@ package com.naraesigning.board.api;
 
 import com.naraesigning.background.BackgroundAssetService;
 import com.naraesigning.background.BackgroundAssetView;
+import com.naraesigning.background.BackgroundContent;
 import com.naraesigning.background.CanvasChange;
 import com.naraesigning.background.CanvasSize;
 import com.naraesigning.board.core.BoardOwner;
@@ -14,6 +15,7 @@ import com.naraesigning.slot.SlotBackground;
 import com.naraesigning.slot.SlotBounds;
 import com.naraesigning.slot.SlotService;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcOperations;
@@ -89,6 +91,11 @@ final class JdbcBoardAdminFacade implements BoardAdminFacade {
         if (!"설정 중".equals(board.status())) throw new BoardLifecycleException("BOARD_NOT_DRAFT");
         return backgrounds.replace(boardId, bytes, mimeType,
                 new CanvasSize(board.canvasWidth(), board.canvasHeight()), change);
+    }
+
+    @Override public Optional<BackgroundContent> currentBackground(BoardOwner owner, UUID boardId) {
+        boards.detail(owner, boardId);
+        return backgrounds.current(boardId);
     }
 
     @Override public BoardView open(BoardOwner owner, UUID boardId) {

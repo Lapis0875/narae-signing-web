@@ -84,6 +84,14 @@ final class BoardAdminController {
         }
     }
 
+    @GetMapping("/{boardId}/background")
+    ResponseEntity<byte[]> background(@PathVariable UUID boardId, HttpServletRequest request) {
+        var current = facade.currentBackground(owner(request), boardId);
+        if (current.isEmpty()) return ResponseEntity.noContent().build();
+        var content = current.orElseThrow();
+        return ResponseEntity.ok().contentType(MediaType.parseMediaType(content.mimeType())).body(content.bytes());
+    }
+
     @PostMapping("/{boardId}/open") Object open(@PathVariable UUID boardId, HttpServletRequest request) {
         return facade.open(owner(request), boardId);
     }
