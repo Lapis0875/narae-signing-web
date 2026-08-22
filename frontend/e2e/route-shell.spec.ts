@@ -29,8 +29,22 @@ async function mockApi(
   sessionResponse: AuthSessionResponse | undefined,
   probe: AuthSessionProbe,
 ): Promise<void> {
-  await page.route("**/api/v1/**", (route) => {
-    const pathname = new URL(route.request().url()).pathname;
+  await page.addInitScript(() => {
+    class QaEventSource {
+      onerror: (() => void) | null = null;
+      onopen: (() => void) | null = null;
+
+      addEventListener() {}
+      close() {}
+    }
+    Object.defineProperty(window, "EventSource", {
+      configurable: true,
+      value: QaEventSource,
+    });
+  });
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
     if (pathname === authSessionPath) {
       probe.requests.push(route.request().url());
       if (sessionResponse !== undefined) {
@@ -42,13 +56,13 @@ async function mockApi(
       }
     }
 
-    if (pathname === publicLinkPath) {
+    if (pathname === publicLinkPath && request.method() === "GET") {
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({ state: "OPEN", title: "서명하기" }),
       });
     }
-    if (pathname === signingSessionPath) {
+    if (pathname === signingSessionPath && request.method() === "GET") {
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({ state: "READY" }),
@@ -93,7 +107,11 @@ async function mockApi(
         }),
       });
     }
-    return route.continue();
+    await route.fulfill({
+      body: JSON.stringify({ code: "FIXTURE_UNEXPECTED_API" }),
+      contentType: "application/json",
+      status: 500,
+    });
   });
 }
 
@@ -107,6 +125,21 @@ const routes = [
 ] as const;
 
 test.describe("@route-shell", () => {
+  test("fails closed for an unknown API request", async ({ page }) => {
+    // Given
+    const probe: AuthSessionProbe = { fulfilledBodies: [], requests: [] };
+    await mockApi(page, { authenticated: false, expiresAt: null }, probe);
+    await page.goto("/login");
+
+    // When
+    const status = await page.evaluate(async () => {
+      return (await fetch("/api/v1/fixture-unknown")).status;
+    });
+
+    // Then
+    expect(status).toBe(500);
+  });
+
   for (const route of routes) {
     test(`renders ${route.path} from a mock API response`, async ({
       page,
@@ -131,6 +164,10 @@ test.describe("@route-shell", () => {
       await expect(
         page.getByRole("heading", { level: 1, name: route.title }),
       ).toBeVisible();
+      if (route.auth === "public") {
+        await expect(page.getByTestId("signer-canvas")).toBeVisible();
+        await page.waitForLoadState("networkidle");
+      }
       if (route.auth === "signed-out") {
         expect(probe.requests).toHaveLength(1);
         expect(probe.fulfilledBodies).toEqual([

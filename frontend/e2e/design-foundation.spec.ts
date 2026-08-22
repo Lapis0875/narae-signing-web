@@ -65,9 +65,24 @@ test("captures every responsive visual-foundation state", async ({
         return nativeFetch(input, init);
       };
     });
+    await page.addInitScript(() => {
+      class QaEventSource {
+        onerror: (() => void) | null = null;
+        onopen: (() => void) | null = null;
+
+        addEventListener() {}
+        close() {}
+      }
+      Object.defineProperty(window, "EventSource", {
+        configurable: true,
+        value: QaEventSource,
+      });
+    });
+    const unexpectedApiRequests: string[] = [];
     await page.route("**/api/v1/**", async (route) => {
-      const pathname = new URL(route.request().url()).pathname;
-      if (apiMode === "loading") {
+      const request = route.request();
+      const pathname = new URL(request.url()).pathname;
+      if (pathname === authSessionPath && apiMode === "loading") {
         await new Promise<void>((resolve) => {
           releaseLoading = resolve;
         });
@@ -86,21 +101,26 @@ test("captures every responsive visual-foundation state", async ({
         });
         return;
       }
-      if (pathname === publicLinkPath) {
+      if (pathname === publicLinkPath && request.method() === "GET") {
         await route.fulfill({
           body: JSON.stringify({ state: "OPEN", title: "서명하기" }),
           contentType: "application/json",
         });
         return;
       }
-      if (pathname === signingSessionPath) {
+      if (pathname === signingSessionPath && request.method() === "GET") {
         await route.fulfill({
           body: JSON.stringify({ state: "READY" }),
           contentType: "application/json",
         });
         return;
       }
-      await route.continue();
+      unexpectedApiRequests.push(`${request.method()} ${pathname}`);
+      await route.fulfill({
+        body: JSON.stringify({ code: "FIXTURE_UNEXPECTED_API" }),
+        contentType: "application/json",
+        status: 500,
+      });
     });
 
     // When: desktop login receives keyboard focus.
@@ -166,6 +186,8 @@ test("captures every responsive visual-foundation state", async ({
     await expect(
       page.getByRole("heading", { level: 1, name: "서명하기" }),
     ).toBeVisible();
+    await expect(page.getByTestId("signer-canvas")).toBeVisible();
+    await page.waitForLoadState("networkidle");
     await settleVisualFrame(page);
     await page.screenshot({
       path: testInfo.outputPath("route-panel-1280x800.png"),
@@ -192,9 +214,17 @@ test("captures every responsive visual-foundation state", async ({
     await expect(page.getByTestId("signer-canvas")).toBeVisible();
     await settleVisualFrame(page);
     await page.screenshot({ path: testInfo.outputPath("signer-768x1024.png") });
+    await page.waitForLoadState("networkidle");
+    const unknownApiStatus = await page.evaluate(async () => {
+      return (await fetch("/api/v1/fixture-unknown")).status;
+    });
+    await settleVisualFrame(page);
+    expect(unknownApiStatus).toBe(500);
+    expect(unexpectedApiRequests).toEqual(["GET /api/v1/fixture-unknown"]);
     expect(consoleErrors).toEqual([
       "api_request_failed {code: FORBIDDEN, method: GET, requestId: null, route: /api/v1/auth/session, status: 403}",
       "api_request_failed {code: MALFORMED_RESPONSE, method: GET, requestId: null, route: /api/v1/auth/session, status: 200}",
+      "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
     ]);
     expect(pageErrors).toEqual([]);
     expect(externalRequests).toEqual([]);
