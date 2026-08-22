@@ -6,6 +6,7 @@ import com.naraesigning.crypto.VersionedCryptoService;
 import java.nio.charset.StandardCharsets;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
@@ -27,12 +28,12 @@ final class JdbcBoardDeletionStore implements BoardDeletionStore {
     }
 
     @Override
-    public void begin(UUID ownerId, UUID boardId) {
-        transactions.executeWithoutResult(transaction -> {
+    public boolean begin(UUID ownerId, UUID boardId) {
+        return Boolean.TRUE.equals(transactions.execute(transaction -> {
             var board = jdbc.query("select owner_id, status from board where id = ? for update", result ->
                     result.next() ? new BoardLock(result.getObject(1, UUID.class), result.getString(2)) : null, boardId);
             if (board == null || !board.ownerId().equals(ownerId)) throw new BoardDeletionException("BOARD_UNAVAILABLE");
-            if ("DELETING".equals(board.status())) return;
+            if ("DELETING".equals(board.status())) return false;
 
             var assets = jdbc.query("""
                     select id, encrypted_object_key, object_key_nonce, object_key_key_version
@@ -41,7 +42,8 @@ final class JdbcBoardDeletionStore implements BoardDeletionStore {
             if (jdbc.update("update board set status = 'DELETING', updated_at = current_timestamp where id = ?",
                     boardId) != 1) throw new BoardDeletionException("BOARD_STATE_CONFLICT");
             for (var asset : assets) insertJob(boardId, asset);
-        });
+            return true;
+        }));
     }
 
     @Override
@@ -59,7 +61,8 @@ final class JdbcBoardDeletionStore implements BoardDeletionStore {
                 from candidates c where j.id = c.id
                 returning j.id, j.board_id, j.encrypted_object_key, j.object_key_nonce,
                           j.object_key_key_version, j.attempt_count, j.lease_token, j.lease_expires_at
-                """, (result, row) -> mapJob(result), now, now, leaseToken, now.plus(leaseDuration), now));
+                """, (result, row) -> mapJob(result), timestamp(now), timestamp(now), leaseToken,
+                timestamp(now.plus(leaseDuration)), timestamp(now)));
     }
 
     @Override
@@ -67,7 +70,8 @@ final class JdbcBoardDeletionStore implements BoardDeletionStore {
         return jdbc.update("""
                 update board_deletion_job set lease_expires_at = ?, updated_at = ?
                 where id = ? and status = 'PROCESSING' and lease_token = ? and lease_expires_at > ?
-                """, now.plus(leaseDuration), now, jobId, leaseToken, now) == 1;
+                """, timestamp(now.plus(leaseDuration)), timestamp(now), jobId, leaseToken,
+                timestamp(now)) == 1;
     }
 
     @Override
@@ -88,7 +92,7 @@ final class JdbcBoardDeletionStore implements BoardDeletionStore {
                 update board_deletion_job set status = 'PENDING', next_attempt_at = ?,
                     last_error = 'OBJECT_DELETE_FAILED', lease_token = null, lease_expires_at = null,
                     updated_at = ? where id = ? and status = 'PROCESSING' and lease_token = ?
-                """, now.plus(delay), now, jobId, leaseToken);
+                """, timestamp(now.plus(delay)), timestamp(now), jobId, leaseToken);
     }
 
     @Override
@@ -127,8 +131,10 @@ final class JdbcBoardDeletionStore implements BoardDeletionStore {
     private static DeletionJob mapJob(ResultSet result) throws SQLException {
         return new DeletionJob(result.getObject("id", UUID.class), result.getObject("board_id", UUID.class),
                 encrypted(result), result.getInt("attempt_count"), result.getObject("lease_token", UUID.class),
-                result.getObject("lease_expires_at", Instant.class));
+                result.getTimestamp("lease_expires_at").toInstant());
     }
+
+    private static Timestamp timestamp(Instant instant) { return Timestamp.from(instant); }
 
     private static EncryptedValue encrypted(ResultSet result) throws SQLException {
         return new EncryptedValue(result.getBytes("encrypted_object_key"), result.getBytes("object_key_nonce"),

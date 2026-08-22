@@ -112,7 +112,7 @@ final class PersistedDeletionFixture {
             if (claimed.isEmpty()) throw new IllegalStateException("expected persisted claim");
         }
 
-        @Override public void begin(UUID ownerId, UUID boardId) {}
+        @Override public boolean begin(UUID ownerId, UUID boardId) { return false; }
 
         @Override
         public List<DeletionJob> claim(UUID token, Instant now, Duration lease) {

@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.UUID;
 
 interface BoardDeletionStore {
-    void begin(UUID ownerId, UUID boardId);
+    boolean begin(UUID ownerId, UUID boardId);
     List<DeletionJob> claim(UUID leaseToken, Instant now, Duration leaseDuration);
     boolean renew(UUID jobId, UUID leaseToken, Instant now, Duration leaseDuration);
     void complete(UUID jobId, UUID leaseToken);

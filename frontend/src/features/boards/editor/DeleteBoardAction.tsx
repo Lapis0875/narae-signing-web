@@ -27,7 +27,12 @@ export function DeleteBoardAction() {
 
   return (
     <>
-      <button disabled={deleting} onClick={() => setOpen(true)} type="button">
+      <button
+        className="board-button board-button--destructive"
+        disabled={deleting}
+        onClick={() => setOpen(true)}
+        type="button"
+      >
         보드 영구 삭제
       </button>
       <ConfirmDialog

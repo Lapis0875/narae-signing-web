@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 
 const boardId = "11111111-1111-4111-8111-111111111111"
-const evidenceDir = process.env.TASK27_EVIDENCE_DIR
+const evidenceDir = process.env.TASK28_EVIDENCE_DIR ?? process.env.TASK27_EVIDENCE_DIR
   ?? path.resolve("../.omo/evidence/task-27-final-png/actual-editor")
 const now = "2026-08-21T00:00:00.000Z"
 
@@ -32,7 +32,11 @@ test("closed board exposes explicit final PNG retry in the production editor too
   await context.addCookies([{ name: "XSRF-TOKEN", value: "csrf-redacted", url: "http://127.0.0.1:4173" }])
   const background = await backgroundPng(page)
   const browserErrors: string[] = []
+  let backgroundRequests = 0
+  let boardRequests = 0
+  let eventRequests = 0
   let finalPngRequests = 0
+  let rosterRequests = 0
   page.on("pageerror", (error) => browserErrors.push(error.message))
   page.on("console", (message) => {
     if (message.type() === "error" && !message.text().includes("503 (Service Unavailable)")) {
@@ -46,6 +50,7 @@ test("closed board exposes explicit final PNG retry in the production editor too
       return route.fulfill({ json: { authenticated: true, expiresAt: new Date(Date.now() + 3_600_000).toISOString() } })
     }
     if (pathname === `/api/v1/admin/boards/${boardId}`) {
+      boardRequests += 1
       return route.fulfill({ json: {
         canvasHeight: 1080,
         canvasWidth: 1920,
@@ -57,11 +62,20 @@ test("closed board exposes explicit final PNG retry in the production editor too
         updatedAt: now,
       } })
     }
-    if (pathname === `/api/v1/admin/boards/${boardId}/roster`) return route.fulfill({ json: [] })
+    if (pathname === `/api/v1/admin/boards/${boardId}/roster`) {
+      rosterRequests += 1
+      return route.fulfill({ json: [] })
+    }
+    if (pathname === `/api/v1/admin/boards/${boardId}/events`) {
+      eventRequests += 1
+      const body = eventRequests === 1 ? "event: board-deleted\ndata:\n\n" : ": connected\n\n"
+      return route.fulfill({ body, contentType: "text/event-stream" })
+    }
     if (pathname === `/api/v1/admin/boards/${boardId}/share`) {
       return route.fulfill({ json: { shareToken: "synthetic-share", version: 1 } })
     }
     if (pathname === `/api/v1/admin/boards/${boardId}/background`) {
+      backgroundRequests += 1
       return route.fulfill({ body: background, contentType: "image/png" })
     }
     if (pathname === `/api/v1/admin/boards/${boardId}/final.png`) {
@@ -79,21 +93,40 @@ test("closed board exposes explicit final PNG retry in the production editor too
   await page.goto(`/boards/${boardId}/edit`)
   const toolbar = page.locator(".editor-toolbar")
   const action = toolbar.getByRole("button", { name: "최종 PNG 다운로드" })
+  const deleteAction = toolbar.getByRole("button", { name: "보드 영구 삭제" })
   await expect(page).toHaveURL(new RegExp(`/boards/${boardId}/edit$`, "u"))
   await expect(page.getByRole("heading", { level: 1, name: "완료된 서명 보드" })).toBeVisible()
   await expect(action).toBeVisible()
   await expect(action).toBeEnabled()
+  await expect(deleteAction).toBeVisible()
+  await expect.poll(() => backgroundRequests).toBeGreaterThanOrEqual(2)
+  await expect.poll(() => boardRequests).toBeGreaterThanOrEqual(2)
+  await expect.poll(() => rosterRequests).toBeGreaterThanOrEqual(2)
 
-  for (const width of [375, 768, 1280]) {
-    const height = width === 1280 ? 800 : 812
+  for (const [width, height] of [[375, 812], [768, 1024], [1280, 800]]) {
     await page.setViewportSize({ width, height })
     await toolbar.scrollIntoViewIfNeeded()
+    await page.getByRole("heading", { level: 1, name: "완료된 서명 보드" }).click()
     await settle(page)
     const bounds = await action.boundingBox()
+    const deleteBounds = await deleteAction.boundingBox()
     expect(bounds).not.toBeNull()
+    expect(deleteBounds).not.toBeNull()
     if (bounds !== null) {
       expect(bounds.x).toBeGreaterThanOrEqual(0)
       expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+    }
+    if (deleteBounds !== null) {
+      expect(deleteBounds.x).toBeGreaterThanOrEqual(0)
+      expect(deleteBounds.x + deleteBounds.width).toBeLessThanOrEqual(width)
+    }
+    if (bounds !== null && deleteBounds !== null) {
+      expect(deleteBounds.height).toBe(bounds.height)
+      const separated = bounds.x + bounds.width <= deleteBounds.x
+        || deleteBounds.x + deleteBounds.width <= bounds.x
+        || bounds.y + bounds.height <= deleteBounds.y
+        || deleteBounds.y + deleteBounds.height <= bounds.y
+      expect(separated).toBe(true)
     }
     await page.screenshot({
       fullPage: false,
@@ -101,11 +134,32 @@ test("closed board exposes explicit final PNG retry in the production editor too
     })
     await writeFile(path.join(evidenceDir, `actual-editor-rest-${width}.json`), `${JSON.stringify({
       actionBounds: bounds,
+      deleteActionBounds: deleteBounds,
+      eventRefetchRequests: { backgroundRequests, boardRequests, eventRequests, rosterRequests },
       height,
       productionRoute: `/boards/${boardId}/edit`,
       toolbarCount: await page.locator(".editor-toolbar").count(),
       viewport: width,
     }, null, 2)}\n`)
+
+    await deleteAction.focus()
+    await expect(deleteAction).toBeFocused()
+    await expect(deleteAction).toHaveCSS("outline-style", "solid")
+    await page.screenshot({
+      fullPage: false,
+      path: path.join(evidenceDir, `actual-editor-delete-focus-${width}.png`),
+    })
+    await deleteAction.click()
+    const confirmation = page.getByRole("dialog", { name: "확인" })
+    await expect(confirmation).toContainText("보드와 모든 서명을 영구 삭제합니다")
+    await expect(confirmation.getByRole("button", { name: "영구 삭제" })).toBeVisible()
+    await page.screenshot({
+      fullPage: false,
+      path: path.join(evidenceDir, `actual-editor-delete-confirmation-${width}.png`),
+    })
+    await confirmation.getByRole("button", { name: "취소" }).click()
+    await expect(confirmation).not.toBeVisible()
+    await expect(deleteAction).toBeFocused()
   }
 
   await page.setViewportSize({ width: 375, height: 812 })

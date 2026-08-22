@@ -61,7 +61,8 @@ class BoardDeletionControllerTest {
     }
 
     private static BoardDeletionController controller(BoardDeletionStore store) {
-        return new BoardDeletionController(new BoardDeletionService(store), Clock.fixed(NOW, ZoneOffset.UTC));
+        return new BoardDeletionController(new BoardDeletionService(store, event -> {}),
+                Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     private static MockHttpServletRequest request(Instant issuedAt) {
@@ -74,7 +75,11 @@ class BoardDeletionControllerTest {
         private UUID ownerId;
         private UUID boardId;
 
-        @Override public void begin(UUID ownerId, UUID boardId) { this.ownerId = ownerId; this.boardId = boardId; }
+        @Override public boolean begin(UUID ownerId, UUID boardId) {
+            this.ownerId = ownerId;
+            this.boardId = boardId;
+            return true;
+        }
         @Override public List<DeletionJob> claim(UUID token, Instant now, Duration lease) { return List.of(); }
         @Override public boolean renew(UUID id, UUID token, Instant now, Duration lease) { return false; }
         @Override public void complete(UUID id, UUID token) {}

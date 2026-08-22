@@ -4,6 +4,7 @@ import com.naraesigning.background.BackgroundObjectStore;
 import com.naraesigning.crypto.VersionedCryptoService;
 import java.time.Clock;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcOperations;
@@ -19,8 +20,8 @@ class BoardDeletionConfiguration {
         return new JdbcBoardDeletionStore(jdbc, new TransactionTemplate(transactions), crypto);
     }
 
-    @Bean BoardDeletionService boardDeletionService(BoardDeletionStore store) {
-        return new BoardDeletionService(store);
+    @Bean BoardDeletionService boardDeletionService(BoardDeletionStore store, ApplicationEventPublisher events) {
+        return new BoardDeletionService(store, events);
     }
 
     @Bean
