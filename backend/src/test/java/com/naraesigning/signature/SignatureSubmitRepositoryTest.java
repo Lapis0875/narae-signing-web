@@ -14,6 +14,7 @@ import com.naraesigning.crypto.VersionedCryptoService;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.sql.ResultSet;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -77,7 +78,8 @@ class SignatureSubmitRepositoryTest {
                 org.mockito.ArgumentMatchers.eq(boardId), org.mockito.ArgumentMatchers.eq(slotId));
         order.verify(jdbc).update(org.mockito.ArgumentMatchers.contains(
                 "encrypted_strokes is null"), any(byte[].class), any(byte[].class),
-                org.mockito.ArgumentMatchers.eq(7), org.mockito.ArgumentMatchers.eq(Instant.EPOCH),
+                org.mockito.ArgumentMatchers.eq(7),
+                org.mockito.ArgumentMatchers.eq(Timestamp.from(Instant.EPOCH)),
                 org.mockito.ArgumentMatchers.eq(slotId));
         order.verify(jdbc).update(org.mockito.ArgumentMatchers.contains(
                 "submitted = false"), org.mockito.ArgumentMatchers.eq(rosterId));

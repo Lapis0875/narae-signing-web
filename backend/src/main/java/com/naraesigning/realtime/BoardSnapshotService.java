@@ -9,12 +9,12 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.UUID;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcOperations;
 import org.springframework.stereotype.Component;
 
 @Component
-@ConditionalOnBean(JdbcOperations.class)
+@ConditionalOnProperty("spring.datasource.url")
 final class BoardSnapshotService {
     private final JdbcOperations jdbc;
     private final VersionedCryptoService crypto;
