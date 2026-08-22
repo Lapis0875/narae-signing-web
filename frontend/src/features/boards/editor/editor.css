@@ -25,6 +25,7 @@
 .editor-roster-list { display: grid; gap: var(--space-8); margin: var(--space-0); padding: var(--space-0); list-style: none; }
 .editor-roster-list button { inline-size: 100%; }
 .editor-file-field { display: grid; gap: var(--space-8); }
+.editor-file-field input { min-inline-size: var(--space-0); inline-size: 100%; }
 .editor-share-url { overflow-wrap: anywhere; color: var(--color-slate-gray); }
 .editor-qr { display: block; inline-size: min(100%, var(--page-min)); margin: var(--space-16) auto; background: var(--color-paper); fill: var(--color-paper); }
 .editor-qr-module { fill: var(--color-ink-navy); }

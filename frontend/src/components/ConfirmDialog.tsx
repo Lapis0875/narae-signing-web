@@ -20,13 +20,29 @@ export function ConfirmDialog({
   const returnFocusRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
+    const rememberInvoker = (event: MouseEvent) => {
+      const target = event.target
+      const invoker = target instanceof HTMLElement
+        ? target.closest<HTMLElement>("button, [href], input, select, textarea, [tabindex]")
+        : null
+      if (invoker !== null && !dialogRef.current?.contains(invoker)) {
+        returnFocusRef.current = invoker
+      }
+    }
+    document.addEventListener("click", rememberInvoker, true)
+    return () => document.removeEventListener("click", rememberInvoker, true)
+  }, [])
+
+  useEffect(() => {
     const dialog = dialogRef.current
     if (dialog === null) {
       return
     }
     if (open) {
       if (!dialog.open) {
-        returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+        if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
+          returnFocusRef.current = document.activeElement
+        }
         dialog.showModal()
         cancelButtonRef.current?.focus()
       }

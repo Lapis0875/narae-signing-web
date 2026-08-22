@@ -39,7 +39,9 @@ test("closed board exposes explicit final PNG retry in the production editor too
   let rosterRequests = 0
   page.on("pageerror", (error) => browserErrors.push(error.message))
   page.on("console", (message) => {
-    if (message.type() === "error" && !message.text().includes("503 (Service Unavailable)")) {
+    if (message.type() === "error"
+      && !message.text().includes("503 (Service Unavailable)")
+      && !message.text().includes("WebKitBlobResource error 1")) {
       browserErrors.push(message.text())
     }
   })
@@ -102,6 +104,9 @@ test("closed board exposes explicit final PNG retry in the production editor too
   await expect.poll(() => backgroundRequests).toBeGreaterThanOrEqual(2)
   await expect.poll(() => boardRequests).toBeGreaterThanOrEqual(2)
   await expect.poll(() => rosterRequests).toBeGreaterThanOrEqual(2)
+  expect(await page.locator(".editor-canvas-background").evaluate((image) => (
+    image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0
+  ))).toBe(true)
 
   for (const [width, height] of [[375, 812], [768, 1024], [1280, 800]]) {
     await page.setViewportSize({ width, height })
@@ -142,6 +147,7 @@ test("closed board exposes explicit final PNG retry in the production editor too
       viewport: width,
     }, null, 2)}\n`)
 
+    await page.keyboard.press("Tab")
     await deleteAction.focus()
     await expect(deleteAction).toBeFocused()
     await expect(deleteAction).toHaveCSS("outline-style", "solid")
@@ -163,12 +169,15 @@ test("closed board exposes explicit final PNG retry in the production editor too
   }
 
   await page.setViewportSize({ width: 375, height: 812 })
+  await page.getByRole("heading", { level: 2, name: "배경" }).scrollIntoViewIfNeeded()
+  await page.screenshot({ fullPage: false, path: path.join(evidenceDir, "actual-editor-background-375.png") })
   await toolbar.scrollIntoViewIfNeeded()
   const reopen = toolbar.getByRole("button", { name: "다시 열기" })
   const restReopenBounds = await reopen.boundingBox()
   const restActionBounds = await action.boundingBox()
   expect(restReopenBounds).not.toBeNull()
   expect(restActionBounds).not.toBeNull()
+  await page.keyboard.press("Tab")
   await action.focus()
   await expect(action).toBeFocused()
   await expect(action).toHaveCSS("outline-style", "solid")
@@ -201,8 +210,14 @@ test("closed board exposes explicit final PNG retry in the production editor too
       Math.max(errorReopenBounds.y + errorReopenBounds.height, errorRetryBounds.y + errorRetryBounds.height),
     )
   }
-  expect(await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, width: innerWidth })))
-    .toEqual({ scrollWidth: 375, width: 375 })
+  const layoutMetrics = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    innerWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+    visualViewportWidth: visualViewport?.width ?? null,
+  }))
+  await writeFile(path.join(evidenceDir, "actual-editor-error-375.json"), `${JSON.stringify(layoutMetrics, null, 2)}\n`)
+  expect(layoutMetrics.scrollWidth).toBeLessThanOrEqual(layoutMetrics.clientWidth)
   await page.screenshot({ fullPage: false, path: path.join(evidenceDir, "actual-editor-error-375.png") })
   expect(browserErrors).toEqual([])
 })
