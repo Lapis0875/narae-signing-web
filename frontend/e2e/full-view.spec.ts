@@ -72,7 +72,7 @@ for (const viewport of viewports) {
       canvasHeight: 600,
       canvasWidth: 800,
       slots: [{
-        background: "WHITE",
+        background: "white",
         height: 0.25,
         id: slotId,
         signature: signed
@@ -150,7 +150,10 @@ for (const viewport of viewports) {
     await page.evaluate(() => window.dispatchEvent(new CustomEvent("qa-sse-event", { detail: { id: 12, type: "board-updated" } })))
     await expect(page.getByTestId("full-view-canvas")).toContainText("전체보기를 불러오지 못했습니다.")
     await page.screenshot({ path: `../.omo/evidence/task-25-realtime-fullview/browser-matrix/${viewport.label}-query-error.png` })
-    expect(browserErrors).toEqual(["Failed to load resource: the server responded with a status of 500 (Internal Server Error)"])
+    expect(browserErrors).toEqual([
+      "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+      "api_request_failed {code: UNKNOWN, method: GET, requestId: null, route: /api/v1/admin/boards/:id/snapshot, status: 500}",
+    ])
     browserErrors.length = 0
 
     mode = "normal"
