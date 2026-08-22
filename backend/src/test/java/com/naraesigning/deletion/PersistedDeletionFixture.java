@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -64,13 +65,17 @@ final class PersistedDeletionFixture {
 
     static final class FakeObjects implements BackgroundObjectStore {
         private final Map<String, Integer> failures = new LinkedHashMap<>();
+        private final Map<String, Runnable> beforeDelete = new LinkedHashMap<>();
         private final List<String> deleted = new ArrayList<>();
 
         void failNext(String key, int count) { failures.put(key, count); }
+        void beforeNextDelete(String key, Runnable action) { beforeDelete.put(key, action); }
         int deletes(String key) { return Math.toIntExact(deleted.stream().filter(key::equals).count()); }
         @Override public byte[] get(String key) { throw new UnsupportedOperationException(); }
         @Override public void put(String key, byte[] bytes) { throw new UnsupportedOperationException(); }
         @Override public void delete(String key) {
+            var action = beforeDelete.remove(key);
+            if (action != null) action.run();
             deleted.add(key);
             var remaining = failures.getOrDefault(key, 0);
             if (remaining > 0) {
@@ -82,13 +87,20 @@ final class PersistedDeletionFixture {
 
     static final class PersistedStore implements BoardDeletionStore {
         private final Map<UUID, JobRow> jobs;
+        private final UUID boardId;
         private final Set<String> graphRows = new java.util.LinkedHashSet<>(
                 List.of("board", "roster", "slot", "background"));
 
-        PersistedStore(Map<UUID, JobRow> jobs) { this.jobs = jobs; }
+        PersistedStore(Map<UUID, JobRow> jobs) {
+            this.jobs = jobs;
+            this.boardId = jobs.values().iterator().next().boardId;
+        }
+        UUID boardId() { return boardId; }
         int graphRowCount() { return graphRows.size(); }
         int jobRowCount() { return jobs.size(); }
-        String boardStatus() { return graphRows.contains("board") ? "DELETING" : "ABSENT"; }
+        Optional<String> boardStatusRow() {
+            return graphRows.contains("board") ? Optional.of("DELETING") : Optional.empty();
+        }
         String status(String key) { return row(key).status.name(); }
         int attemptCount(String key) { return row(key).attemptCount; }
         Instant nextAttemptAt(String key) { return row(key).nextAttemptAt; }
