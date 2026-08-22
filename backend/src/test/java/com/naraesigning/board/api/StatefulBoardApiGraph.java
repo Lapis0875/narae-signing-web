@@ -15,6 +15,7 @@ import com.naraesigning.crypto.VersionedCryptoService;
 import com.naraesigning.roster.RosterEntry;
 import com.naraesigning.roster.RosterIdentity;
 import com.naraesigning.roster.RosterService;
+import com.naraesigning.realtime.BoardMutationEvent;
 import com.naraesigning.slot.Slot;
 import com.naraesigning.slot.SlotBackground;
 import com.naraesigning.slot.SlotBounds;
@@ -181,12 +182,14 @@ final class StatefulBoardApiGraph {
     }
 
     private Object eventCall(InvocationOnMock invocation) {
-        var event = (BoardLifecycleEvent) invocation.getArgument(0);
         if (transactionTrace.isEmpty() || !"commit".equals(transactionTrace.getLast())) {
             throw new AssertionError("event published before commit");
         }
-        events.add(event.status());
-        transactionTrace.add("event:" + event.status());
+        Object event = invocation.getArgument(0);
+        String type = event instanceof BoardLifecycleEvent lifecycle ? lifecycle.status()
+                : ((BoardMutationEvent) event).type();
+        events.add(type);
+        transactionTrace.add("event:" + type);
         return null;
     }
 

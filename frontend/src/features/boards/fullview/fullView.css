@@ -1,0 +1,11 @@
+.full-view-page { display: grid; min-block-size: 100dvh; width: min(100% - var(--space-32), var(--content-max)); margin-inline: auto; padding-block: var(--space-48); gap: var(--space-24); align-content: start; }
+.full-view-page h1 { margin: var(--space-0); }
+.full-view-canvas { position: relative; overflow: hidden; inline-size: 100%; border-radius: var(--radius-control); background: var(--color-pebble); box-shadow: var(--shadow-card); }
+.full-view-background { position: absolute; inset: var(--space-0); inline-size: 100%; block-size: 100%; object-fit: contain; background: var(--color-paper); }
+.full-view-slot { position: absolute; overflow: hidden; }
+.full-view-slot[data-background="white"] { background: var(--color-paper); }
+.full-view-slot[data-background="transparent"] { background: transparent; }
+.full-view-signature { display: block; inline-size: 100%; block-size: 100%; color: var(--color-ink-navy); }
+.full-view-state { display: grid; min-block-size: var(--space-64); place-items: center; color: var(--color-slate-gray); }
+.full-view-state p { margin: var(--space-0); }
+@media (max-width: 47.9375rem) { .full-view-page { width: min(100% - var(--space-24), var(--content-max)); padding-block: var(--space-24); } }
