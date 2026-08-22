@@ -8,6 +8,7 @@ import com.naraesigning.crypto.CryptoContext;
 import com.naraesigning.crypto.VersionedCryptoService;
 import com.naraesigning.realtime.BoardMutationEvent;
 import java.nio.charset.StandardCharsets;
+import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -17,6 +18,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -32,6 +34,97 @@ class BoardDeletionPostgresTest {
 
     static {
         System.setProperty("api.version", System.getProperty("api.version", "1.44"));
+    }
+
+    @Test
+    void legacyV3ProcessingJobMigratesWithoutDataLossAndBecomesReclaimable() {
+        var postgres = new PostgreSQLContainer<>("postgres:16-alpine")
+                .withLabel(LABEL_KEY, LABEL_VALUE);
+        try {
+            postgres.start();
+            var v3 = Flyway.configure()
+                    .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+                    .locations("classpath:db/migration")
+                    .target(MigrationVersion.fromVersion("3"))
+                    .load();
+            assertThat(v3.migrate().migrationsExecuted).isEqualTo(3);
+            var setup = new JdbcTemplate(dataSource(postgres, "task28-v3-upgrade"));
+            var ownerId = UUID.randomUUID();
+            var boardId = UUID.randomUUID();
+            var jobId = UUID.randomUUID();
+            var crypto = new VersionedCryptoService(Map.of(1, new byte[32]), 1);
+            var jobKey = crypto.encrypt("private/task28-legacy-object".getBytes(StandardCharsets.UTF_8),
+                    CryptoContext.field("board-deletion-job", jobId.toString(), "object-key"));
+            setup.update("""
+                    insert into admin_user (id, email, password_hash, status)
+                    values (?, ?, 'not-a-real-password-hash', 'ACTIVE')
+                    """, ownerId, ownerId + "@example.invalid");
+            setup.update("""
+                    insert into board (id, owner_id, title, status, canvas_width, canvas_height,
+                        share_token_lookup_hash, share_token_ciphertext, share_token_nonce,
+                        share_token_key_version)
+                    values (?, ?, 'task28 legacy migration', 'DELETING', 800, 600, ?, ?, ?, 1)
+                    """, boardId, ownerId, bytes(41), bytes(42), bytes(43));
+            setup.update("""
+                    insert into board_deletion_job (id, board_id, encrypted_object_key, object_key_nonce,
+                        object_key_key_version, reason, status, attempt_count, next_attempt_at, last_error)
+                    values (?, ?, ?, ?, 1, 'BOARD_DELETE', 'PROCESSING', 7,
+                        timestamp with time zone '2026-08-21 00:00:00+00', 'OBJECT_DELETE_FAILED')
+                    """, jobId, boardId, jobKey.ciphertext(), jobKey.nonce());
+
+            var v4 = Flyway.configure()
+                    .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+                    .locations("classpath:db/migration")
+                    .target(MigrationVersion.fromVersion("4"))
+                    .load();
+            assertThat(v4.migrate().migrationsExecuted).isOne();
+
+            var migrated = setup.queryForMap("select * from board_deletion_job where id = ?", jobId);
+            assertThat(migrated.get("board_id")).isEqualTo(boardId);
+            assertThat((byte[]) migrated.get("encrypted_object_key")).isEqualTo(jobKey.ciphertext());
+            assertThat((byte[]) migrated.get("object_key_nonce")).isEqualTo(jobKey.nonce());
+            assertThat(migrated.get("object_key_key_version")).isEqualTo(1);
+            assertThat(migrated.get("attempt_count")).isEqualTo(7);
+            assertThat(migrated.get("last_error")).isEqualTo("OBJECT_DELETE_FAILED");
+            assertThat(migrated.get("reason")).isEqualTo("BOARD_DELETE");
+            assertThat(migrated.get("status")).isEqualTo("PENDING");
+            assertThat(((Timestamp) migrated.get("next_attempt_at")).toInstant())
+                    .isEqualTo(Instant.parse("2026-08-21T00:00:00Z"));
+            assertThat(migrated.get("lease_token")).isNull();
+            assertThat(migrated.get("lease_expires_at")).isNull();
+
+            var token = UUID.randomUUID();
+            var now = Instant.parse("2100-01-01T00:00:00Z");
+            var reclaimer = store(postgres, "task28-v4-reclaimer", crypto);
+            var claimed = reclaimer.claim(token, now, LEASE);
+            assertThat(claimed).singleElement().satisfies(job -> {
+                assertThat(job.id()).isEqualTo(jobId);
+                assertThat(job.attemptCount()).isEqualTo(8);
+                assertThat(job.leaseToken()).isEqualTo(token);
+            });
+            assertThatThrownBy(() -> setup.update(
+                    "update board_deletion_job set lease_token = null where id = ?", jobId))
+                    .hasMessageContaining("board_deletion_job_lease_check");
+            assertThatThrownBy(() -> setup.update(
+                    "update board_deletion_job set status = 'PENDING' where id = ?", jobId))
+                    .hasMessageContaining("board_deletion_job_lease_check");
+            reclaimer.retry(jobId, token, now, 8);
+            var retried = setup.queryForMap(
+                    "select status, attempt_count, lease_token, lease_expires_at, last_error "
+                            + "from board_deletion_job where id = ?", jobId);
+            assertThat(retried).containsEntry("status", "PENDING")
+                    .containsEntry("attempt_count", 8)
+                    .containsEntry("last_error", "OBJECT_DELETE_FAILED");
+            assertThat(retried.get("lease_token")).isNull();
+            assertThat(retried.get("lease_expires_at")).isNull();
+        } finally {
+            postgres.stop();
+        }
+
+        assertThat(DockerClientFactory.instance().client().listContainersCmd()
+                .withShowAll(true)
+                .withLabelFilter(Map.of(LABEL_KEY, LABEL_VALUE))
+                .exec()).isEmpty();
     }
 
     @Test
