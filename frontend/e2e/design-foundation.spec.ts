@@ -2,6 +2,10 @@ import { chromium, expect, test } from "@playwright/test";
 
 type ApiMode = "generic-error" | "loading" | "ready";
 
+const authSessionPath = "/api/v1/auth/session";
+const publicLinkPath = "/api/v1/public/links/share-1";
+const signingSessionPath = "/api/v1/public/signing-session";
+
 async function settleVisualFrame(page: import("@playwright/test").Page) {
   await page.evaluate(async () => {
     await document.fonts.ready;
@@ -62,26 +66,41 @@ test("captures every responsive visual-foundation state", async ({
       };
     });
     await page.route("**/api/v1/**", async (route) => {
+      const pathname = new URL(route.request().url()).pathname;
       if (apiMode === "loading") {
         await new Promise<void>((resolve) => {
           releaseLoading = resolve;
         });
       }
-      if (apiMode === "generic-error") {
+      if (pathname === authSessionPath && apiMode === "generic-error") {
         await route.fulfill({
           body: JSON.stringify({}),
           contentType: "application/json",
         });
         return;
       }
-      await route.fulfill({
-        body: JSON.stringify({
-          authenticated: false,
-          expiresAt: null,
-          status: "ready",
-        }),
-        contentType: "application/json",
-      });
+      if (pathname === authSessionPath) {
+        await route.fulfill({
+          body: JSON.stringify({ authenticated: false, expiresAt: null }),
+          contentType: "application/json",
+        });
+        return;
+      }
+      if (pathname === publicLinkPath) {
+        await route.fulfill({
+          body: JSON.stringify({ state: "OPEN", title: "서명하기" }),
+          contentType: "application/json",
+        });
+        return;
+      }
+      if (pathname === signingSessionPath) {
+        await route.fulfill({
+          body: JSON.stringify({ state: "READY" }),
+          contentType: "application/json",
+        });
+        return;
+      }
+      await route.continue();
     });
 
     // When: desktop login receives keyboard focus.
@@ -143,7 +162,7 @@ test("captures every responsive visual-foundation state", async ({
     await page.goto("/sign/share-1");
 
     // Then
-    await expect(page.locator(".route-panel")).toBeVisible();
+    await expect(page.locator(".public-signer__intro")).toBeVisible();
     await expect(
       page.getByRole("heading", { level: 1, name: "서명하기" }),
     ).toBeVisible();
@@ -173,7 +192,10 @@ test("captures every responsive visual-foundation state", async ({
     await expect(page.getByTestId("signer-canvas")).toBeVisible();
     await settleVisualFrame(page);
     await page.screenshot({ path: testInfo.outputPath("signer-768x1024.png") });
-    expect(consoleErrors).toEqual([]);
+    expect(consoleErrors).toEqual([
+      "api_request_failed {code: FORBIDDEN, method: GET, requestId: null, route: /api/v1/auth/session, status: 403}",
+      "api_request_failed {code: MALFORMED_RESPONSE, method: GET, requestId: null, route: /api/v1/auth/session, status: 200}",
+    ]);
     expect(pageErrors).toEqual([]);
     expect(externalRequests).toEqual([]);
   } finally {

@@ -10,6 +10,19 @@ type AuthSessionProbe = {
 };
 
 const authSessionPath = "/api/v1/auth/session";
+const boardId = "11111111-1111-4111-8111-111111111111";
+const publicLinkPath = "/api/v1/public/links/share-1";
+const signingSessionPath = "/api/v1/public/signing-session";
+const boardDetail = {
+  canvasHeight: 1080,
+  canvasWidth: 1920,
+  createdAt: "2026-08-23T00:00:00.000Z",
+  id: boardId,
+  shareLinkVersion: 1,
+  status: "설정 중",
+  title: "보드 편집",
+  updatedAt: "2026-08-23T00:00:00.000Z",
+};
 
 async function mockApi(
   page: Page,
@@ -17,7 +30,8 @@ async function mockApi(
   probe: AuthSessionProbe,
 ): Promise<void> {
   await page.route("**/api/v1/**", (route) => {
-    if (new URL(route.request().url()).pathname === authSessionPath) {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === authSessionPath) {
       probe.requests.push(route.request().url());
       if (sessionResponse !== undefined) {
         probe.fulfilledBodies.push(sessionResponse);
@@ -28,10 +42,58 @@ async function mockApi(
       }
     }
 
-    return route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({ status: "ready" }),
-    });
+    if (pathname === publicLinkPath) {
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ state: "OPEN", title: "서명하기" }),
+      });
+    }
+    if (pathname === signingSessionPath) {
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ state: "READY" }),
+      });
+    }
+    if (pathname === "/api/v1/admin/boards") {
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+    }
+    if (pathname === `/api/v1/admin/boards/${boardId}`) {
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(boardDetail),
+      });
+    }
+    if (pathname === `/api/v1/admin/boards/${boardId}/roster`) {
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+    }
+    if (pathname === `/api/v1/admin/boards/${boardId}/share`) {
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ shareToken: "share-1", version: 1 }),
+      });
+    }
+    if (pathname === `/api/v1/admin/boards/${boardId}/background`) {
+      return route.fulfill({ status: 204 });
+    }
+    if (pathname === `/api/v1/admin/boards/${boardId}/snapshot`) {
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          backgroundPresent: false,
+          boardId,
+          canvasHeight: boardDetail.canvasHeight,
+          canvasWidth: boardDetail.canvasWidth,
+          slots: [],
+        }),
+      });
+    }
+    return route.continue();
   });
 }
 
@@ -39,8 +101,8 @@ const routes = [
   { auth: "signed-out", path: "/login", title: "관리자 로그인" },
   { auth: "signed-in", path: "/boards", title: "보드 목록" },
   { auth: "signed-in", path: "/boards/new", title: "새 보드" },
-  { auth: "signed-in", path: "/boards/board-1/edit", title: "보드 편집" },
-  { auth: "signed-in", path: "/boards/board-1/full", title: "보드 전체보기" },
+  { auth: "signed-in", path: `/boards/${boardId}/edit`, title: "보드 편집" },
+  { auth: "signed-in", path: `/boards/${boardId}/full`, title: "보드 전체보기" },
   { auth: "public", path: "/sign/share-1", title: "서명하기" },
 ] as const;
 
