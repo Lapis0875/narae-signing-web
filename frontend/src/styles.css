@@ -72,6 +72,11 @@ p {
   margin-block: var(--space-0) var(--space-16);
 }
 
+dialog p {
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+
 h1 {
   font-size: var(--font-size-heading);
   font-weight: var(--font-weight-bold);

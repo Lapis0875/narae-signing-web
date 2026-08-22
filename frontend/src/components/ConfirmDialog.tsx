@@ -1,7 +1,8 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, type RefObject } from "react"
 
 type ConfirmDialogProps = {
   readonly confirmLabel: string
+  readonly invokerRef: RefObject<HTMLElement | null>
   readonly message: string
   readonly onCancel: () => void
   readonly onConfirm: () => void
@@ -10,6 +11,7 @@ type ConfirmDialogProps = {
 
 export function ConfirmDialog({
   confirmLabel,
+  invokerRef,
   message,
   onCancel,
   onConfirm,
@@ -20,29 +22,13 @@ export function ConfirmDialog({
   const returnFocusRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
-    const rememberInvoker = (event: MouseEvent) => {
-      const target = event.target
-      const invoker = target instanceof HTMLElement
-        ? target.closest<HTMLElement>("button, [href], input, select, textarea, [tabindex]")
-        : null
-      if (invoker !== null && !dialogRef.current?.contains(invoker)) {
-        returnFocusRef.current = invoker
-      }
-    }
-    document.addEventListener("click", rememberInvoker, true)
-    return () => document.removeEventListener("click", rememberInvoker, true)
-  }, [])
-
-  useEffect(() => {
     const dialog = dialogRef.current
     if (dialog === null) {
       return
     }
     if (open) {
       if (!dialog.open) {
-        if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
-          returnFocusRef.current = document.activeElement
-        }
+        returnFocusRef.current = invokerRef.current
         dialog.showModal()
         cancelButtonRef.current?.focus()
       }
@@ -56,7 +42,7 @@ export function ConfirmDialog({
     if (returnFocus?.isConnected) {
       returnFocus.focus()
     }
-  }, [open])
+  }, [invokerRef, open])
 
   useEffect(() => () => {
     if (dialogRef.current?.open) {

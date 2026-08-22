@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { ConfirmDialog } from "../../../components/ConfirmDialog.tsx"
 import type { RosterEntry, RosterIdentity } from "./rosterApi.ts"
 
@@ -10,6 +10,7 @@ type RosterTableProps = {
 }
 
 export function RosterTable({ entries, isSaving, onDelete, onSave }: RosterTableProps) {
+  const deleteInvokerRef = useRef<HTMLButtonElement>(null)
   const [deleteEntryId, setDeleteEntryId] = useState<string | null>(null)
 
   return (
@@ -42,7 +43,10 @@ export function RosterTable({ entries, isSaving, onDelete, onSave }: RosterTable
                   <button
                     className="board-button board-button--destructive"
                     disabled={isSaving || entry.submitted}
-                    onClick={() => setDeleteEntryId(entry.id)}
+                    onClick={(event) => {
+                      deleteInvokerRef.current = event.currentTarget
+                      setDeleteEntryId(entry.id)
+                    }}
                     type="button"
                   >삭제</button>
                 </div>
@@ -54,6 +58,7 @@ export function RosterTable({ entries, isSaving, onDelete, onSave }: RosterTable
       )}
       <ConfirmDialog
         confirmLabel="삭제"
+        invokerRef={deleteInvokerRef}
         message="선택한 명단을 삭제할까요?"
         onCancel={() => setDeleteEntryId(null)}
         onConfirm={() => {

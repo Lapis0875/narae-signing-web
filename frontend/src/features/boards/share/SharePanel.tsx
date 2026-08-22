@@ -1,5 +1,5 @@
 import encodeQR from "qr"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { ConfirmDialog } from "../../../components/ConfirmDialog.tsx"
 import type { Share } from "../editor/editorApi.ts"
 
@@ -10,6 +10,7 @@ type SharePanelProps = {
 }
 
 export function SharePanel({ disabled, onReissue, share }: SharePanelProps) {
+  const invokerRef = useRef<HTMLButtonElement>(null)
   const [confirming, setConfirming] = useState(false)
   const [copyFailed, setCopyFailed] = useState(false)
   const shareUrl = new URL(`/sign/${encodeURIComponent(share.shareToken)}`, window.location.origin).toString()
@@ -37,11 +38,12 @@ export function SharePanel({ disabled, onReissue, share }: SharePanelProps) {
           setCopyFailed(false)
           void navigator.clipboard.writeText(shareUrl).catch(() => setCopyFailed(true))
         }} type="button">링크 복사</button>
-        <button className="board-button board-button--destructive" disabled={disabled} onClick={() => setConfirming(true)} type="button">링크 재발급</button>
+        <button className="board-button board-button--destructive" disabled={disabled} onClick={() => setConfirming(true)} ref={invokerRef} type="button">링크 재발급</button>
       </div>
       {copyFailed ? <p role="alert">링크를 복사하지 못했습니다. 주소를 직접 선택해 복사해 주세요.</p> : null}
       <ConfirmDialog
         confirmLabel="재발급"
+        invokerRef={invokerRef}
         message="기존 링크는 즉시 무효화되어 이전 링크의 서명자는 더 이상 이용할 수 없습니다."
         onCancel={() => setConfirming(false)}
         onConfirm={() => { setConfirming(false); void onReissue() }}
