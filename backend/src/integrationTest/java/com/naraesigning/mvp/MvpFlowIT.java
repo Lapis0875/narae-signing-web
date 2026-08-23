@@ -45,7 +45,7 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockMultipartFile;
-import org.springframework.session.web.http.SessionRepositoryFilter;
+import org.springframework.session.jdbc.JdbcIndexedSessionRepository;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.ActiveProfiles;
@@ -86,7 +86,7 @@ final class MvpFlowIT {
     @Autowired ApplicationContext context;
     @Autowired MvpFlowFixture.ControlledClock clock;
     @Autowired MvpFlowFixture.ControlledObjectStore objects;
-    @Autowired SessionRepositoryFilter<?> sessionFilter;
+    @Autowired JdbcIndexedSessionRepository sessionRepository;
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
@@ -141,7 +141,7 @@ final class MvpFlowIT {
             var calls = List.of(FIRST_SLOT, SECOND_SLOT).stream().map(slot -> workers.submit(() -> {
                 start.await();
                 return mvc.perform(MvpFlowFixture.admin(patch("/api/v1/admin/boards/{board}/slots/{slot}", BOARD, slot)
-                        .contentType(APPLICATION_JSON).content(body), sessionFilter))
+                        .contentType(APPLICATION_JSON).content(body), sessionRepository))
                         .andReturn().getResponse().getStatus();
             })).toList();
             start.countDown();
@@ -168,7 +168,7 @@ final class MvpFlowIT {
                 submissionStart.await();
                 return mvc.perform(MvpFlowFixture.signer(
                         post("/api/v1/public/signing-session/signature").contentType(APPLICATION_JSON)
-                                .content(signature), placedSlot, 1, 4d / 3d, sessionFilter))
+                                .content(signature), placedSlot, 1, 4d / 3d, sessionRepository))
                         .andReturn().getResponse().getStatus();
             })).toList();
             submissionStart.countDown();
@@ -192,7 +192,7 @@ final class MvpFlowIT {
         var upload = new MockMultipartFile("file", "synthetic.png", "image/png",
                 MvpFlowFixture.png(new Color(128, 192, 224)));
         var uploadStatus = mvc.perform(MvpFlowFixture.admin(multipart(
-                "/api/v1/admin/boards/{board}/background", BOARD).file(upload), sessionFilter))
+                "/api/v1/admin/boards/{board}/background", BOARD).file(upload), sessionRepository))
                 .andReturn().getResponse().getStatus();
         assertThat(uploadStatus).as("background-upload-status=%03d", uploadStatus).isEqualTo(200);
         var assetId = jdbc.queryForObject("select background_asset_id from board where id=?", UUID.class, BOARD);
@@ -234,7 +234,7 @@ final class MvpFlowIT {
         var upload = new MockMultipartFile("file", "synthetic.png", "image/png",
                 MvpFlowFixture.png(Color.LIGHT_GRAY));
         var uploadStatus = mvc.perform(MvpFlowFixture.admin(multipart(
-                "/api/v1/admin/boards/{board}/background", BOARD).file(upload), sessionFilter))
+                "/api/v1/admin/boards/{board}/background", BOARD).file(upload), sessionRepository))
                 .andReturn().getResponse().getStatus();
         assertThat(uploadStatus).as("background-upload-status=%03d", uploadStatus).isEqualTo(200);
         var assetId = jdbc.queryForObject("select background_asset_id from board where id=?", UUID.class, BOARD);
@@ -245,7 +245,7 @@ final class MvpFlowIT {
         var objectKey = new String(crypto.decrypt(encryptedKey,
                 CryptoContext.field("background-asset", assetId.toString(), "object-key")), StandardCharsets.UTF_8);
         var response = mvc.perform(MvpFlowFixture.admin(delete("/api/v1/admin/boards/{board}", BOARD)
-                .contentType(APPLICATION_JSON).content("{\"confirmed\":true}"), sessionFilter))
+                .contentType(APPLICATION_JSON).content("{\"confirmed\":true}"), sessionRepository))
                 .andReturn().getResponse();
         assertThat(response.getStatus()).isEqualTo(204);
         assertThat(jdbc.queryForObject("select status from board where id=?", String.class, BOARD))
@@ -287,7 +287,7 @@ final class MvpFlowIT {
         var background = new MockMultipartFile("file", "synthetic.png", "image/png",
                 MvpFlowFixture.png(new Color(128, 192, 224)));
         mvc.perform(MvpFlowFixture.admin(multipart(
-                "/api/v1/admin/boards/{board}/background", BOARD).file(background), sessionFilter));
+                "/api/v1/admin/boards/{board}/background", BOARD).file(background), sessionRepository));
         MvpFlowFixture.place(jdbc, FIRST_SLOT, "0.25", "0.25", "0.50", "0.25");
         var strokes = "{\"version\":1,\"strokes\":[{\"points\":[{\"x\":0,\"y\":500000},{\"x\":1000000,\"y\":500000}]}]}";
         var encrypted = crypto.encrypt(strokes.getBytes(StandardCharsets.UTF_8),
@@ -301,7 +301,7 @@ final class MvpFlowIT {
 
         // When: the admin downloads through the production HTTP controller.
         var response = mvc.perform(MvpFlowFixture.admin(
-                get("/api/v1/admin/boards/{board}/final.png", BOARD), sessionFilter)).andReturn().getResponse();
+                get("/api/v1/admin/boards/{board}/final.png", BOARD), sessionRepository)).andReturn().getResponse();
         var png = response.getContentAsByteArray();
         var image = ImageIO.read(new ByteArrayInputStream(png));
 

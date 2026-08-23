@@ -11,6 +11,7 @@ import com.naraesigning.session.SignerSessionContract;
 import com.naraesigning.signature.SignatureSession;
 import jakarta.servlet.Filter;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -44,7 +45,7 @@ final class MvpFlowSessionFixtureTest {
         request.setSession(session);
         var response = new MockHttpServletResponse();
         var downstream = new AtomicBoolean();
-        var sessionFilter = sessionFilter();
+        var sessionFilter = sessionFilter(sessions());
         var adminFilter = adminFilter();
 
         // When: SessionRepositoryFilter resolves the request before AdminBoardFilter.
@@ -59,22 +60,31 @@ final class MvpFlowSessionFixtureTest {
 
     @Test
     void adminFixturePersistsRouteCookieAcceptedByRealFilters() throws Exception {
-        // Given: the fixture seeds an administrator contract through the real session filter.
-        var sessionFilter = sessionFilter();
-        var request = MvpFlowFixture.admin(get("/api/v1/admin/probe"), sessionFilter)
+        // Given: the fixture persists an administrator contract in the session repository.
+        var sessions = sessions();
+        var sessionFilter = sessionFilter(sessions);
+        var request = MvpFlowFixture.admin(get("/api/v1/admin/probe"), sessions)
                 .buildRequest(new MockServletContext());
         var response = new MockHttpServletResponse();
         var downstream = new AtomicBoolean();
+        var resolved = new AtomicReference<HttpSession>();
         var adminFilter = adminFilter();
 
         // When: the route request passes through the same session and administrator filters as the API.
         sessionFilter.doFilter(request, response,
                 (filteredRequest, filteredResponse) -> adminFilter.doFilter(filteredRequest, filteredResponse,
-                        (ignoredRequest, ignoredResponse) -> downstream.set(true)));
+                        (resolvedRequest, ignoredResponse) -> {
+                            resolved.set(((HttpServletRequest) resolvedRequest).getSession(false));
+                            downstream.set(true);
+                        }));
 
         // Then: ADMIN_SESSION resolves to a current persisted session and reaches downstream with 200.
         assertThat(response.getStatus()).isEqualTo(200);
         assertThat(downstream).isTrue();
+        assertThat(AdminSessionContract.isCurrent(resolved.get(), NOW)).isTrue();
+        assertThat(resolved.get().getAttribute(AdminSessionContract.ADMIN_USER_ID)).isEqualTo(OWNER.toString());
+        assertThat(resolved.get().getMaxInactiveInterval())
+                .isEqualTo(AdminSessionContract.ABSOLUTE_LIFETIME.toSeconds());
         assertThat(Arrays.stream(request.getCookies()).map(cookie -> cookie.getName()))
                 .contains("ADMIN_SESSION")
                 .doesNotContain("SIGNER_SESSION");
@@ -82,28 +92,39 @@ final class MvpFlowSessionFixtureTest {
 
     @Test
     void signerFixturePersistsRouteCookieAcceptedByRealSessionFilter() throws Exception {
-        // Given: the fixture seeds a signer contract through the real public-route session filter.
-        var sessionFilter = sessionFilter();
-        var request = MvpFlowFixture.signer(get("/api/v1/public/probe"), SLOT, 1, 4d / 3d, sessionFilter)
+        // Given: the fixture persists a signer contract in the session repository.
+        var sessions = sessions();
+        var sessionFilter = sessionFilter(sessions);
+        var request = MvpFlowFixture.signer(get("/api/v1/public/probe"), SLOT, 1, 4d / 3d, sessions)
                 .buildRequest(new MockServletContext());
         var response = new MockHttpServletResponse();
         var resolved = new AtomicReference<SignatureSession>();
+        var resolvedSession = new AtomicReference<HttpSession>();
 
         // When: the public route resolves the fixture cookie through SessionRepositoryFilter.
-        sessionFilter.doFilter(request, response, (filteredRequest, ignoredResponse) -> resolved.set(
-                SignatureSession.from(((HttpServletRequest) filteredRequest).getSession(false), NOW)));
+        sessionFilter.doFilter(request, response, (filteredRequest, ignoredResponse) -> {
+            var session = ((HttpServletRequest) filteredRequest).getSession(false);
+            resolvedSession.set(session);
+            resolved.set(SignatureSession.from(session, NOW));
+        });
 
         // Then: SIGNER_SESSION restores the exact contract without exposing its private attribute keys.
         assertThat(response.getStatus()).isEqualTo(200);
         assertThat(resolved.get()).isEqualTo(new SignatureSession(new SignerSessionContract.Value(
                 BOARD, SLOT, 1, 1, 4d / 3d, NOW.minusSeconds(60)), true));
+        assertThat(resolvedSession.get().getMaxInactiveInterval())
+                .isEqualTo(SignerSessionContract.MAXIMUM_LIFETIME.toSeconds());
         assertThat(Arrays.stream(request.getCookies()).map(cookie -> cookie.getName()))
                 .contains("SIGNER_SESSION")
                 .doesNotContain("ADMIN_SESSION");
     }
 
-    private static SessionRepositoryFilter<MapSession> sessionFilter() {
-        var filter = new SessionRepositoryFilter<>(new MapSessionRepository(new ConcurrentHashMap<>()));
+    private static MapSessionRepository sessions() {
+        return new MapSessionRepository(new ConcurrentHashMap<>());
+    }
+
+    private static SessionRepositoryFilter<MapSession> sessionFilter(MapSessionRepository sessions) {
+        var filter = new SessionRepositoryFilter<>(sessions);
         filter.setHttpSessionIdResolver(new PathAwareSessionIdResolver());
         return filter;
     }
