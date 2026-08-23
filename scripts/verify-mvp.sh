@@ -4,7 +4,7 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 base=905014d0a78f12060e69872fd1fc21bed38e8453
-candidate_base=5352744330c1e4d45272b9c2bf382b8f56f23745
+candidate_base=dc3ce6056237f65d2b48c746499bdc62e87d10fe
 repair_fixture=d4649dbf72532382541ace39f9285e7ff3b611c4
 repair_snapshot=14477473410c38dd8778405978fed8dd3b81f649
 mode=${1:---dry-run}
@@ -203,14 +203,14 @@ validate_execute() {
     main_candidate=$(git -C "$root" rev-parse --verify refs/heads/main^{commit} 2>/dev/null) \
         || fail "refs/heads/main is not a commit"
     [ "$main_candidate" = "$candidate" ] || fail "candidate is not refs/heads/main"
-    candidate_parents=$(git -C "$root" rev-list --parents -n 1 "$candidate")
-    set -- $candidate_parents
-    [ "$#" -eq 3 ] || fail "candidate must have exactly two parents"
-    [ "$2" = "$candidate_base" ] || fail "candidate first parent is not the coordinator base"
     git -C "$root" merge-base --is-ancestor "$repair_fixture" "$candidate" \
         || fail "approved fixture repair is not an ancestor"
     git -C "$root" merge-base --is-ancestor "$repair_snapshot" "$candidate" \
         || fail "approved snapshot repair is not an ancestor"
+    candidate_parents=$(git -C "$root" rev-list --parents -n 1 "$candidate")
+    set -- $candidate_parents
+    [ "$#" -eq 3 ] || fail "candidate must have exactly two parents"
+    [ "$2" = "$candidate_base" ] || fail "candidate first parent is not the coordinator base"
     [ -z "$(git -C "$root" status --porcelain=v1)" ] || fail "candidate worktree must be clean"
     frontend_port=${TASK30_FRONTEND_PORT:-}
     case "$frontend_port" in ''|*[!0-9]*) fail "TASK30_FRONTEND_PORT must be numeric";; esac
