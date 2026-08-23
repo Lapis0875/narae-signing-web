@@ -4,7 +4,7 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 base=905014d0a78f12060e69872fd1fc21bed38e8453
-candidate_base=0dcf151544677f03dce9046b58973daf464fc505
+candidate_base=2293475d9618ae60055584ae9504a65d1587a01a
 repair_fixture=d4649dbf72532382541ace39f9285e7ff3b611c4
 repair_snapshot=14477473410c38dd8778405978fed8dd3b81f649
 mode=${1:---dry-run}
@@ -290,6 +290,25 @@ cp "$work/original-before.json" "$evidence/original-before.json"
 cp "$work/original-before-health.tsv" "$evidence/original-before-health.tsv"
 for id in $original_running_ids; do run_bounded 120 docker stop "$id" >/dev/null; done
 
+testcontainers_snapshot "$work/testcontainers-before.txt"
+set +e
+run_bounded 1800 sh -c 'cd "$1" && ./gradlew clean check integrationTest' task30 "$root/backend" \
+    > "$evidence/backend-clean-check.log" 2>&1
+gradle_status=$?
+set -e
+for report in test integrationTest; do
+    report_root="$root/backend/build/reports/tests/$report"
+    [ ! -d "$report_root" ] || {
+        mkdir -p "$evidence/backend/build/reports/tests"
+        cp -R "$report_root" "$evidence/backend/build/reports/tests/"
+    }
+done
+scan_retained_evidence || fail "retained evidence scan failed"
+[ "$gradle_status" -eq 0 ] || exit "$gradle_status"
+testcontainers_snapshot "$work/testcontainers-after.txt"
+cmp -s "$work/testcontainers-before.txt" "$work/testcontainers-after.txt" \
+    || fail "Testcontainers resources remain after Gradle completion"
+
 run_bounded 900 sh -c 'cd "$1" && npm ci' task30 "$root/frontend" > "$evidence/frontend-install.log" 2>&1
 run_bounded 300 sh -c 'cd "$1" && npm run lint' task30 "$root/frontend" > "$evidence/frontend-lint.log" 2>&1
 run_bounded 300 sh -c 'cd "$1" && npm run typecheck' task30 "$root/frontend" > "$evidence/frontend-typecheck.log" 2>&1
@@ -299,13 +318,6 @@ run_bounded 1200 sh -c 'cd "$1" && PLAYWRIGHT_OUTPUT_DIR="$2" \
     npx playwright test --project=chromium --project=webkit --workers=1 --trace=off' \
     task30 "$root/frontend" "$work/playwright-mock-output" \
     > "$evidence/frontend-playwright.log" 2>&1
-testcontainers_snapshot "$work/testcontainers-before.txt"
-run_bounded 1800 sh -c 'cd "$1" && ./gradlew clean check integrationTest' task30 "$root/backend" \
-    > "$evidence/backend-clean-check.log" 2>&1
-testcontainers_snapshot "$work/testcontainers-after.txt"
-cmp -s "$work/testcontainers-before.txt" "$work/testcontainers-after.txt" \
-    || fail "Testcontainers resources remain after Gradle completion"
-
 compose_cleanup_required=true
 run_bounded 900 docker compose -p "$project" -f "$compose_file" up -d --wait \
     > "$evidence/compose-up.log" 2>&1

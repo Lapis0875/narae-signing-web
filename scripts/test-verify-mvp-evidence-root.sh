@@ -25,6 +25,7 @@ self_reported_root=
 self_report_validated=false
 self_dirty_retained=false
 guard_fixture_root=
+backend_fixture_root=
 
 marker_binds_candidate() {
     marker_path=$1
@@ -129,6 +130,14 @@ cleanup() {
             *) self_cleanup_ok=false;;
         esac
         guard_fixture_root=
+    fi
+
+    if [ -n "$backend_fixture_root" ]; then
+        case "$backend_fixture_root" in
+            /private/tmp/narae-task30-backend-report.*) rm -rf -- "$backend_fixture_root";;
+            *) self_cleanup_ok=false;;
+        esac
+        backend_fixture_root=
     fi
 
     case "$worktree_state" in
@@ -334,7 +343,7 @@ run_cleanup_self_regression() {
 }
 
 run_candidate_guard_regression() {
-    candidate_base=0dcf151544677f03dce9046b58973daf464fc505
+    candidate_base=2293475d9618ae60055584ae9504a65d1587a01a
     repair_fixture=d4649dbf72532382541ace39f9285e7ff3b611c4
     source_head=$(git -C "$repo_root" rev-parse HEAD)
     set -- $(git -C "$repo_root" rev-list --parents -n 1 "$source_head")
@@ -346,10 +355,13 @@ run_candidate_guard_regression() {
     git -C "$fixture_repo" config user.email 'task30-guard@example.invalid'
     git -C "$fixture_repo" switch --quiet -c successor "$source_head"
     cp "$repo_root/scripts/verify-mvp.sh" "$fixture_repo/scripts/verify-mvp.sh"
-    if ! git -C "$fixture_repo" diff --quiet -- scripts/verify-mvp.sh; then
-        git -C "$fixture_repo" add scripts/verify-mvp.sh
-        git -C "$fixture_repo" commit --quiet -m 'test: stage candidate guard under test'
-    fi
+    cat > "$fixture_repo/backend/gradlew" <<'EOF'
+#!/bin/sh
+exit 23
+EOF
+    chmod 700 "$fixture_repo/backend/gradlew"
+    git -C "$fixture_repo" add backend/gradlew scripts/verify-mvp.sh
+    git -C "$fixture_repo" commit --quiet --allow-empty -m 'test: stage candidate guard under test'
     successor=$(git -C "$fixture_repo" rev-parse HEAD)
 
     git -C "$fixture_repo" switch --quiet -c missing-second "$repair_fixture"
@@ -386,11 +398,22 @@ case "$*" in
     'ps -aq --filter label=com.docker.compose.project='*) exit 0;;
     'network ls -q --filter label=com.docker.compose.project='*) exit 0;;
     'volume ls -q --filter label=com.docker.compose.project='*) exit 0;;
-    'ps -q --filter publish=18083') exit 0;;
+    'ps -aq --filter label=org.testcontainers=true') exit 0;;
+    'network ls -q --filter label=org.testcontainers=true') exit 0;;
+    'volume ls -q --filter label=org.testcontainers=true') exit 0;;
+    'ps -q --filter publish=18083') printf 'anchor\n';;
+    'inspect --format {{ index .Config.Labels "com.docker.compose.project" }} anchor') :;;
+    'inspect anchor') printf '%s\n' '[{"State":{"Health":{"Status":"healthy"},"Running":true},"Id":"anchor","Image":"image","Mounts":[],"Name":"/anchor","NetworkSettings":{"Networks":{}}}]';;
+    'stop anchor'|'start anchor') :;;
     *) echo "unexpected fake docker command: $*" >&2; exit 99;;
 esac
 EOF
     chmod 700 "$fake_bin/docker"
+    cat > "$fake_bin/curl" <<'EOF'
+#!/bin/sh
+printf '200'
+EOF
+    chmod 700 "$fake_bin/curl"
     node22_bin=/Users/lapis0875/.nvm/versions/node/v22.23.2/bin
     run_path="$fake_bin:$node22_bin:$PATH"
     export FAKE_DOCKER_LEDGER="$ledger"
@@ -411,20 +434,22 @@ EOF
             ./scripts/verify-mvp.sh --execute) >> "$output" 2>&1
         case_status=$?
         set -e
-        [ "$case_status" -ne 0 ] || self_fail "$case_name unexpectedly passed"
-        grep -F "$expected" "$output" >/dev/null || self_fail "$case_name missed expected failure: $expected"
         if [ "$case_name" = positive ]; then
-            grep -F 'docker ps -q --filter publish=18083' "$ledger" >/dev/null || self_fail 'positive missed retained anchor call'
-            grep -F 'FAIL: expected exactly one retained 18083 container' "$output" >/dev/null || self_fail 'positive missed retained anchor sentinel'
+            [ "$case_status" -eq 23 ] || self_fail "positive exit is $case_status, expected 23"
+            grep -F 'docker stop anchor' "$ledger" >/dev/null || self_fail 'positive missed retained-stack stop'
+            grep -F 'docker start anchor' "$ledger" >/dev/null || self_fail 'positive missed retained-stack restoration'
+            grep -Eq 'docker compose .* up' "$ledger" && self_fail 'positive reached Compose'
             rm -rf -- "$fixture_repo/.omo/evidence/task30"
-        elif [ -s "$ledger" ]; then
-            self_fail "$case_name reached fake Docker"
+        else
+            [ "$case_status" -ne 0 ] || self_fail "$case_name unexpectedly passed"
+            grep -F "$expected" "$output" >/dev/null || self_fail "$case_name missed expected failure: $expected"
+            [ ! -s "$ledger" ] || self_fail "$case_name reached fake Docker"
         fi
         [ "$dirty" = false ] || unlink -- "$dirty_path"
-        echo "PASS: guard_case=$case_name exit=$case_status fake_docker_ledger=$([ -s "$ledger" ] && echo reached-anchor || echo empty)"
+        echo "PASS: guard_case=$case_name exit=$case_status fake_docker_ledger=$([ -s "$ledger" ] && echo pre-gradle || echo empty)"
     }
 
-    run_guard_case positive 'FAIL: expected exactly one retained 18083 container' "$coordinator" "$coordinator" "$coordinator" false false
+    run_guard_case positive '' "$coordinator" "$coordinator" "$coordinator" false false
     run_guard_case malformed 'FAIL: candidate SHA must be a full lowercase commit SHA' "$coordinator" "$coordinator" not-a-sha false false
     run_guard_case ref 'FAIL: candidate SHA must be a full lowercase commit SHA' "$coordinator" "$coordinator" main false false
     abbreviated=$(printf '%s' "$coordinator" | cut -c1-12)
@@ -438,7 +463,140 @@ EOF
     echo "PASS: candidate=$coordinator topology=two-parent first-parent=$candidate_base detached=true real_docker_executed=false"
 }
 
+run_backend_report_regression() {
+    candidate_base=2293475d9618ae60055584ae9504a65d1587a01a
+    backend_fixture_root=$(mktemp -d /private/tmp/narae-task30-backend-report.XXXXXX)
+    fixture_repo="$backend_fixture_root/repo"
+    fake_bin="$backend_fixture_root/fake-bin"
+    ledger="$backend_fixture_root/docker-ledger.log"
+    ordering="$backend_fixture_root/retained-stack-order.log"
+    git clone --quiet --no-hardlinks "$repo_root" "$fixture_repo"
+    git -C "$fixture_repo" config user.name 'Task30 Backend Report Fixture'
+    git -C "$fixture_repo" config user.email 'task30-backend-report@example.invalid'
+    git -C "$fixture_repo" switch --quiet -c successor "$candidate_base"
+    cp "$repo_root/scripts/verify-mvp.sh" "$fixture_repo/scripts/verify-mvp.sh"
+    cat > "$fixture_repo/backend/gradlew" <<'EOF'
+#!/bin/sh
+set -eu
+mkdir -p build/reports/tests/test build/reports/tests/integrationTest build/reports/tests/unrelated
+printf '<html>unit</html>\n' > build/reports/tests/test/index.html
+printf '<html>integration</html>\n' > build/reports/tests/integrationTest/index.html
+printf '<html>unrelated</html>\n' > build/reports/tests/unrelated/index.html
+if [ "${TASK30_FAKE_GRADLE_REPORT_CASE:-clean}" = secret ]; then
+    printf '%s%s\n' 'synthetic-pass' 'word-phrase' >> build/reports/tests/test/index.html
+fi
+printf 'gradle\n' >> "$FAKE_ORDERING_MARKER"
+case "${TASK30_FAKE_GRADLE_REPORT_CASE:-clean}" in
+    success) exit 0;;
+    *) exit 23;;
+esac
+EOF
+    chmod 700 "$fixture_repo/backend/gradlew"
+    git -C "$fixture_repo" add backend/gradlew scripts/verify-mvp.sh
+    git -C "$fixture_repo" commit --quiet --allow-empty -m 'test: stage backend report retention candidate'
+    successor=$(git -C "$fixture_repo" rev-parse HEAD)
+    git -C "$fixture_repo" switch --quiet -C main "$candidate_base"
+    git -C "$fixture_repo" merge --quiet --no-ff -m 'test: coordinator candidate' "$successor"
+    candidate=$(git -C "$fixture_repo" rev-parse HEAD)
+
+    mkdir "$fake_bin"
+    cat > "$fake_bin/docker" <<'EOF'
+#!/bin/sh
+set -eu
+printf 'docker' >> "$FAKE_DOCKER_LEDGER"
+for arg; do printf ' %s' "$arg" >> "$FAKE_DOCKER_LEDGER"; done
+printf '\n' >> "$FAKE_DOCKER_LEDGER"
+case "$*" in
+    'ps -q --filter publish=28083'|'compose version') exit 0;;
+    'ps -aq --filter label=com.docker.compose.project='*|'network ls -q --filter label=com.docker.compose.project='*|'volume ls -q --filter label=com.docker.compose.project='*) exit 0;;
+    'ps -aq --filter label=org.testcontainers=true'|'network ls -q --filter label=org.testcontainers=true'|'volume ls -q --filter label=org.testcontainers=true') exit 0;;
+    'ps -q --filter publish=18083') printf 'anchor\n';;
+    'inspect --format {{ index .Config.Labels "com.docker.compose.project" }} anchor') :;;
+    'inspect anchor') printf '%s\n' '[{"State":{"Health":{"Status":"healthy"},"Running":true},"Id":"anchor","Image":"image","Mounts":[],"Name":"/anchor","NetworkSettings":{"Networks":{}}}]';;
+    'stop anchor') printf 'suspended\n' >> "$FAKE_ORDERING_MARKER";;
+    'start anchor') printf 'restored\n' >> "$FAKE_ORDERING_MARKER";;
+    *) echo "unexpected fake docker command: $*" >&2; exit 99;;
+esac
+EOF
+    chmod 700 "$fake_bin/docker"
+    cat > "$fake_bin/curl" <<'EOF'
+#!/bin/sh
+set -eu
+printf '200'
+EOF
+    chmod 700 "$fake_bin/curl"
+    cat > "$fake_bin/npm" <<'EOF'
+#!/bin/sh
+case "${TASK30_FAKE_GRADLE_REPORT_CASE:-}" in success) exit 24;; esac
+exit 0
+EOF
+    chmod 700 "$fake_bin/npm"
+    cat > "$fake_bin/npx" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod 700 "$fake_bin/npx"
+    node22_bin=/Users/lapis0875/.nvm/versions/node/v22.23.2/bin
+    run_path="$fake_bin:$node22_bin:$PATH"
+    export FAKE_DOCKER_LEDGER="$ledger"
+
+    run_backend_case() {
+        case_name=$1
+        expected_status=$2
+        report_case=$3
+        rm -rf -- "$fixture_repo/.omo/evidence/task30"
+        : > "$ledger"
+        : > "$ordering"
+        output="$backend_fixture_root/$case_name.log"
+        set +e
+        (cd "$fixture_repo" && PATH="$run_path" TASK30_DOCKER_AUTHORITY=approved \
+            TASK30_CANDIDATE_SHA="$candidate" TASK30_FRONTEND_PORT=28083 TASK30_NETWORK_OCTET=31 \
+            TASK30_FAKE_GRADLE_REPORT_CASE="$report_case" FAKE_ORDERING_MARKER="$ordering" \
+            ./scripts/verify-mvp.sh --execute) > "$output" 2>&1
+        case_status=$?
+        set -e
+        [ "$case_status" -eq "$expected_status" ] || self_fail "$case_name exit is $case_status, expected $expected_status"
+        [ "$(sed -n '1p' "$ordering")" = suspended ] || self_fail "$case_name Gradle started before retained-stack suspension"
+        [ "$(sed -n '2p' "$ordering")" = gradle ] || self_fail "$case_name missing fake Gradle ordering marker"
+        grep -F 'docker stop anchor' "$ledger" >/dev/null || self_fail "$case_name missed retained-stack stop"
+        grep -F 'docker start anchor' "$ledger" >/dev/null || self_fail "$case_name missed retained-stack restoration"
+        grep -Eq 'docker compose .* up' "$ledger" && self_fail "$case_name reached Compose"
+        leaf=$(find "$fixture_repo/.omo/evidence/task30" -mindepth 1 -maxdepth 1 -type d -name 'execute-*' -print)
+        [ "$(printf '%s\n' "$leaf" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] || self_fail "$case_name evidence leaf count is invalid"
+        [ "$(stat -f '%Lp' "$leaf")" = 700 ] || self_fail "$case_name evidence leaf mode is not 700"
+        case "$case_name" in
+            clean|success)
+                [ -f "$leaf/backend/build/reports/tests/test/index.html" ] || self_fail 'clean allowed unit report is missing'
+                [ -f "$leaf/backend/build/reports/tests/integrationTest/index.html" ] || self_fail 'clean allowed integration report is missing'
+                [ ! -e "$leaf/backend/build/reports/tests/unrelated" ] || self_fail 'clean unrelated report was retained'
+                grep -F 'synthetic-password-phrase' "$leaf" -r >/dev/null && self_fail 'clean credential marker was retained'
+                echo "PASS: backend_report_case=$case_name exit=$case_status leaf=$leaf mode=700 reports=test,integrationTest ordering=suspended-before-gradle";;
+            secret)
+                grep -F 'FAIL: retained evidence scan failed' "$output" >/dev/null || self_fail 'secret redaction failure is missing'
+                grep -F 'synthetic-password-phrase' "$leaf/backend/build/reports/tests/test/index.html" >/dev/null || self_fail 'secret fixture marker is missing'
+                echo "PASS: backend_report_case=secret exit=$case_status redaction=rejected ordering=suspended-before-gradle";;
+        esac
+        run_id=${leaf##*/execute-}
+        for marker in /private/tmp/narae-task30-verify.*/.task30-owned /private/tmp/narae-task30-data.*/.task30-owned
+        do
+            [ -f "$marker" ] && grep -Fqx "$run_id" "$marker" || continue
+            case "$marker" in
+                /private/tmp/narae-task30-verify.*/.task30-owned|/private/tmp/narae-task30-data.*/.task30-owned) rm -rf -- "${marker%/.task30-owned}";;
+            esac
+        done
+    }
+
+    run_backend_case clean 23 clean
+    run_backend_case secret 1 secret
+    run_backend_case success 24 success
+    echo 'PASS: backend_report_regression real_docker_executed=false'
+}
+
 case ${1:-} in
+    --task30-backend-report-regression)
+        [ "$#" -eq 1 ] || { echo "usage: $0 --task30-backend-report-regression" >&2; exit 2; }
+        run_backend_report_regression
+        exit 0;;
     --task30-candidate-guard-regression)
         [ "$#" -eq 1 ] || { echo "usage: $0 --task30-candidate-guard-regression" >&2; exit 2; }
         run_candidate_guard_regression
