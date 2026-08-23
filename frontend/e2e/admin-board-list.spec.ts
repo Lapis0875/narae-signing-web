@@ -520,10 +520,24 @@ test("creates a board and keeps the server roster snapshot through import errors
     await expect(page.getByTestId("full-view-canvas")).toBeAttached()
     await capture({ route: `/boards/${boardId}/full`, state: "full-view-handoff", viewport })
 
+    const signingSessionResponse = viewport.width === 375
+      ? undefined
+      : page.waitForResponse((response) => {
+        const request = response.request()
+        const responseUrl = new URL(response.url())
+        return request.method() === "GET"
+          && responseUrl.origin === new URL(page.url()).origin
+          && responseUrl.pathname === "/api/v1/public/signing-session"
+          && response.status() === 200
+      })
     await page.goto("/sign/safe-share")
     if (viewport.width === 375) {
       await expect(page.getByTestId("unsupported-device-view")).toBeVisible()
     } else {
+      if (signingSessionResponse === undefined) {
+        throw new Error("Expected signing session response")
+      }
+      expect(await (await signingSessionResponse).finished()).toBeNull()
       await expect(page.getByTestId("signer-canvas")).toBeVisible()
     }
     await capture({ route: "/sign/safe-share", state: "public-signer-handoff", viewport })

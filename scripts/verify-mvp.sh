@@ -4,7 +4,7 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 base=905014d0a78f12060e69872fd1fc21bed38e8453
-candidate_base=dc3ce6056237f65d2b48c746499bdc62e87d10fe
+candidate_base=0dcf151544677f03dce9046b58973daf464fc505
 repair_fixture=d4649dbf72532382541ace39f9285e7ff3b611c4
 repair_snapshot=14477473410c38dd8778405978fed8dd3b81f649
 mode=${1:---dry-run}
