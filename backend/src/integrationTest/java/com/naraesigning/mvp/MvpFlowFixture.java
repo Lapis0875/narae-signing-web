@@ -11,6 +11,8 @@ import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
 import io.minio.messages.Item;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import java.awt.Color;
 import java.io.ByteArrayInputStream;
 import java.awt.image.BufferedImage;
@@ -23,6 +25,7 @@ import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import javax.imageio.ImageIO;
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
@@ -32,7 +35,9 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.mock.web.MockHttpSession;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.session.web.http.SessionRepositoryFilter;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 final class MvpFlowFixture {
@@ -70,24 +75,38 @@ final class MvpFlowFixture {
                 """, x, y, width, height, slotId);
     }
 
-    static MockHttpServletRequestBuilder admin(MockHttpServletRequestBuilder request) {
-        var session = new MockHttpSession();
-        AdminSessionContract.issue(session, OWNER, NOW.minusSeconds(60));
-        return request.session(session)
+    static MockHttpServletRequestBuilder admin(
+            MockHttpServletRequestBuilder request, SessionRepositoryFilter<?> sessionFilter) throws Exception {
+        return request.cookie(sessionCookie(sessionFilter, "/api/v1/admin", "ADMIN_SESSION",
+                        session -> AdminSessionContract.issue(session, OWNER, NOW.minusSeconds(60))))
                 .cookie(new jakarta.servlet.http.Cookie(CsrfTokenContract.COOKIE_NAME, CSRF))
                 .header(CsrfTokenContract.HEADER_NAME, CSRF)
                 .secure(true);
     }
 
     static MockHttpServletRequestBuilder signer(
-            MockHttpServletRequestBuilder request, UUID slotId, long revision, double aspect) {
-        var session = new MockHttpSession();
-        SignerSessionContract.issue(session, new SignerSessionContract.Value(
-                BOARD, slotId, 1, revision, aspect, NOW.minusSeconds(60)));
-        return request.session(session)
+            MockHttpServletRequestBuilder request, UUID slotId, long revision, double aspect,
+            SessionRepositoryFilter<?> sessionFilter) throws Exception {
+        return request.cookie(sessionCookie(sessionFilter, "/api/v1/public", "SIGNER_SESSION",
+                        session -> SignerSessionContract.issue(session, new SignerSessionContract.Value(
+                                BOARD, slotId, 1, revision, aspect, NOW.minusSeconds(60)))))
                 .cookie(new jakarta.servlet.http.Cookie(CsrfTokenContract.COOKIE_NAME, CSRF))
                 .header(CsrfTokenContract.HEADER_NAME, CSRF)
                 .secure(true);
+    }
+
+    private static jakarta.servlet.http.Cookie sessionCookie(
+            SessionRepositoryFilter<?> sessionFilter, String path, String name,
+            Consumer<HttpSession> issue) throws Exception {
+        var request = new MockHttpServletRequest("POST", path);
+        request.setSecure(true);
+        var response = new MockHttpServletResponse();
+        sessionFilter.doFilter(request, response,
+                (filteredRequest, ignoredResponse) -> issue.accept(
+                        ((HttpServletRequest) filteredRequest).getSession(true)));
+        var cookie = response.getCookie(name);
+        if (cookie == null) throw new IllegalStateException("Session filter did not issue " + name);
+        return cookie;
     }
 
     static byte[] png(Color color) throws Exception {
