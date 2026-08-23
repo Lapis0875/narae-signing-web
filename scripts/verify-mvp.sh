@@ -3,7 +3,7 @@ set -eu
 # allow: SIZE_OK — one fail-safe state machine owns suspension, isolated verification, and exact restoration.
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-base=59e9eb4dc61bb4d5efde7865d956a1e19a1a9148
+base=905014d0a78f12060e69872fd1fc21bed38e8453
 mode=${1:---dry-run}
 compose_source="$root/infra/compose/compose.yml"
 fixture="$root/scripts/fixtures/mvp-roster.csv"
@@ -240,7 +240,7 @@ case "$data_root" in *'..'*|*//*|*/./*) fail "generated data root is not canonic
 [ ! -L "$data_root" ] || fail "generated data root must not be a symlink"
 evidence="$root/.omo/evidence/task30/execute-$run_id"
 [ ! -e "$evidence" ] || fail "Task30 evidence root already exists"
-mkdir -m 700 "$evidence"
+mkdir -p -m 700 "$evidence"
 require_project_absent
 
 compose_file="$work/compose.yml"
