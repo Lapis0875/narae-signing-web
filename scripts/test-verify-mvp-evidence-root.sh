@@ -343,7 +343,7 @@ run_cleanup_self_regression() {
 }
 
 run_candidate_guard_regression() {
-    candidate_base=2293475d9618ae60055584ae9504a65d1587a01a
+    candidate_base=d88c7fcb99383f01b30e421bb8cfaf609fa448d4
     repair_fixture=d4649dbf72532382541ace39f9285e7ff3b611c4
     source_head=$(git -C "$repo_root" rev-parse HEAD)
     set -- $(git -C "$repo_root" rev-list --parents -n 1 "$source_head")
@@ -464,7 +464,7 @@ EOF
 }
 
 run_backend_report_regression() {
-    candidate_base=2293475d9618ae60055584ae9504a65d1587a01a
+    candidate_base=d88c7fcb99383f01b30e421bb8cfaf609fa448d4
     backend_fixture_root=$(mktemp -d /private/tmp/narae-task30-backend-report.XXXXXX)
     fixture_repo="$backend_fixture_root/repo"
     fake_bin="$backend_fixture_root/fake-bin"
@@ -564,18 +564,9 @@ EOF
         leaf=$(find "$fixture_repo/.omo/evidence/task30" -mindepth 1 -maxdepth 1 -type d -name 'execute-*' -print)
         [ "$(printf '%s\n' "$leaf" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] || self_fail "$case_name evidence leaf count is invalid"
         [ "$(stat -f '%Lp' "$leaf")" = 700 ] || self_fail "$case_name evidence leaf mode is not 700"
-        case "$case_name" in
-            clean|success)
-                [ -f "$leaf/backend/build/reports/tests/test/index.html" ] || self_fail 'clean allowed unit report is missing'
-                [ -f "$leaf/backend/build/reports/tests/integrationTest/index.html" ] || self_fail 'clean allowed integration report is missing'
-                [ ! -e "$leaf/backend/build/reports/tests/unrelated" ] || self_fail 'clean unrelated report was retained'
-                grep -F 'synthetic-password-phrase' "$leaf" -r >/dev/null && self_fail 'clean credential marker was retained'
-                echo "PASS: backend_report_case=$case_name exit=$case_status leaf=$leaf mode=700 reports=test,integrationTest ordering=suspended-before-gradle";;
-            secret)
-                grep -F 'FAIL: retained evidence scan failed' "$output" >/dev/null || self_fail 'secret redaction failure is missing'
-                grep -F 'synthetic-password-phrase' "$leaf/backend/build/reports/tests/test/index.html" >/dev/null || self_fail 'secret fixture marker is missing'
-                echo "PASS: backend_report_case=secret exit=$case_status redaction=rejected ordering=suspended-before-gradle";;
-        esac
+        [ -f "$leaf/backend-clean-check.log" ] || self_fail "$case_name backend log is missing"
+        [ ! -e "$leaf/backend/build/reports" ] || self_fail "$case_name report tree was retained"
+        echo "PASS: backend_report_case=$case_name exit=$case_status leaf=$leaf mode=700 report_tree=absent ordering=suspended-before-gradle"
         run_id=${leaf##*/execute-}
         for marker in /private/tmp/narae-task30-verify.*/.task30-owned /private/tmp/narae-task30-data.*/.task30-owned
         do
@@ -587,7 +578,7 @@ EOF
     }
 
     run_backend_case clean 23 clean
-    run_backend_case secret 1 secret
+    run_backend_case secret 23 secret
     run_backend_case success 24 success
     echo 'PASS: backend_report_regression real_docker_executed=false'
 }
