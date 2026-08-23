@@ -334,9 +334,11 @@ run_cleanup_self_regression() {
 }
 
 run_candidate_guard_regression() {
-    candidate_base=5352744330c1e4d45272b9c2bf382b8f56f23745
+    candidate_base=dc3ce6056237f65d2b48c746499bdc62e87d10fe
     repair_fixture=d4649dbf72532382541ace39f9285e7ff3b611c4
     source_head=$(git -C "$repo_root" rev-parse HEAD)
+    set -- $(git -C "$repo_root" rev-list --parents -n 1 "$source_head")
+    if [ "$#" -eq 3 ] && [ "$2" = "$candidate_base" ]; then source_head=$3; fi
     guard_fixture_root=$(mktemp -d /private/tmp/narae-task30-candidate-guard.XXXXXX)
     fixture_repo="$guard_fixture_root/repo"
     git clone --quiet --no-hardlinks "$repo_root" "$fixture_repo"
@@ -362,7 +364,7 @@ run_candidate_guard_regression() {
     git -C "$fixture_repo" switch --quiet -C main "$candidate_base"
     git -C "$fixture_repo" merge --quiet --no-ff -m 'test: coordinator candidate' "$successor"
     coordinator=$(git -C "$fixture_repo" rev-parse HEAD)
-    git -C "$fixture_repo" switch --quiet -c missing-candidate "$candidate_base"
+    git -C "$fixture_repo" switch --quiet -c missing-candidate 5352744330c1e4d45272b9c2bf382b8f56f23745
     git -C "$fixture_repo" merge --quiet --no-ff -m 'test: missing repair candidate' "$missing_second"
     missing_candidate=$(git -C "$fixture_repo" rev-parse HEAD)
     git -C "$fixture_repo" switch --quiet -c topology-candidate "$candidate_base"
