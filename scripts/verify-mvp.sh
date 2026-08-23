@@ -4,7 +4,7 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 base=905014d0a78f12060e69872fd1fc21bed38e8453
-candidate_base=d88c7fcb99383f01b30e421bb8cfaf609fa448d4
+candidate_base=4a48dc56428ff620b41d187b69ebe7d80d3a7ce9
 repair_fixture=d4649dbf72532382541ace39f9285e7ff3b611c4
 repair_snapshot=14477473410c38dd8778405978fed8dd3b81f649
 mode=${1:---dry-run}
@@ -116,10 +116,11 @@ testcontainers_snapshot() {
 }
 
 scan_retained_evidence() {
-    [ -d "$evidence" ] || return 0
+    target=${1:-$evidence}
+    [ -e "$target" ] || return 0
     run_bounded 60 python3 -c '
 import os, pathlib, sys
-root = pathlib.Path(sys.argv[1])
+target = pathlib.Path(sys.argv[1])
 needles = [os.environ[name].encode() for name in (
     "POSTGRES_USER", "POSTGRES_PASSWORD", "MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD"
 ) if os.environ.get(name)]
@@ -127,12 +128,12 @@ needles += [value.encode() for value in (
     "XSRF-TOKEN", "shareToken", "Set-Cookie:", "Password:",
     "synthetic-password-phrase", "synthetic-task30-share", "synthetic-csrf", "task30@example.invalid"
 )]
-for path in root.rglob("*"):
+for path in (target,) if target.is_file() else target.rglob("*"):
     if path.is_file():
         data = path.read_bytes()
         if any(needle in data for needle in needles):
             raise SystemExit(1)
-' "$evidence"
+' "$target"
 }
 
 restore_and_cleanup() {
@@ -292,10 +293,55 @@ for id in $original_running_ids; do run_bounded 120 docker stop "$id" >/dev/null
 
 testcontainers_snapshot "$work/testcontainers-before.txt"
 set +e
+backend_log="$work/backend-clean-check.log"
 run_bounded 1800 sh -c 'cd "$1" && ./gradlew clean check integrationTest' task30 "$root/backend" \
-    > "$evidence/backend-clean-check.log" 2>&1
+    > "$backend_log" 2>&1
 gradle_status=$?
 set -e
+scan_retained_evidence "$backend_log" || fail "backend log scan failed"
+if [ -d "$root/backend/build/test-results" ]; then
+    python3 - "$root/backend/build/test-results" <<'PY' > "$work/background-upload-statuses"
+import re
+import sys
+import xml.etree.ElementTree as element_tree
+from pathlib import Path
+
+marker = re.compile(r"background-upload-status=")
+status = re.compile(r"(?<![A-Za-z0-9_-])background-upload-status=([0-9]{3})(?![A-Za-z0-9_-])")
+
+def statuses(value):
+    markers = [match.start() for match in marker.finditer(value)]
+    matches = list(status.finditer(value))
+    if markers != [match.start() for match in matches]:
+        raise SystemExit("invalid background upload status marker")
+    return [match.group(1) for match in matches]
+
+for report in Path(sys.argv[1]).rglob("*.xml"):
+    for element in element_tree.parse(report).getroot().iter():
+        failure = element.tag.rsplit("}", 1)[-1] == "failure"
+        message_values = []
+        for name, value in element.attrib.items():
+            values = statuses(value)
+            if values and not (failure and name == "message"):
+                raise SystemExit("unexpected background upload status marker")
+            if failure and name == "message":
+                message_values = values
+            for value in values:
+                print(f"background-upload-status={value}")
+        text_values = statuses(element.text or "")
+        if text_values and (not failure or text_values != message_values):
+            raise SystemExit("unexpected background upload status marker")
+        if element.tail and statuses(element.tail):
+            raise SystemExit("unexpected background upload status marker")
+PY
+    if [ -s "$work/background-upload-statuses" ]; then
+        LC_ALL=C sort -u "$work/background-upload-statuses" | awk '
+            /^background-upload-status=[0-9][0-9][0-9]$/ { print; next }
+            { exit 1 }
+        ' > "$evidence/background-upload-status-summary.log" || fail "background upload status summary is invalid"
+    fi
+fi
+rm -f "$work/background-upload-statuses" "$backend_log"
 scan_retained_evidence || fail "retained evidence scan failed"
 [ "$gradle_status" -eq 0 ] || exit "$gradle_status"
 testcontainers_snapshot "$work/testcontainers-after.txt"
