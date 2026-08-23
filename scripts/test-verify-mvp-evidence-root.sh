@@ -24,6 +24,7 @@ self_reported_probe=
 self_reported_root=
 self_report_validated=false
 self_dirty_retained=false
+guard_fixture_root=
 
 marker_binds_candidate() {
     marker_path=$1
@@ -121,6 +122,14 @@ cleanup() {
     cleanup_self_regression || self_cleanup_ok=false
     linked_worktree_removed=true
     marked_probe_removed=true
+
+    if [ -n "$guard_fixture_root" ]; then
+        case "$guard_fixture_root" in
+            /private/tmp/narae-task30-candidate-guard.*) rm -rf -- "$guard_fixture_root";;
+            *) self_cleanup_ok=false;;
+        esac
+        guard_fixture_root=
+    fi
 
     case "$worktree_state" in
         absent) :;;
@@ -324,7 +333,114 @@ run_cleanup_self_regression() {
     self_fifo_dir=
 }
 
+run_candidate_guard_regression() {
+    candidate_base=5352744330c1e4d45272b9c2bf382b8f56f23745
+    repair_fixture=d4649dbf72532382541ace39f9285e7ff3b611c4
+    source_head=$(git -C "$repo_root" rev-parse HEAD)
+    guard_fixture_root=$(mktemp -d /private/tmp/narae-task30-candidate-guard.XXXXXX)
+    fixture_repo="$guard_fixture_root/repo"
+    git clone --quiet --no-hardlinks "$repo_root" "$fixture_repo"
+    git -C "$fixture_repo" config user.name 'Task30 Guard Fixture'
+    git -C "$fixture_repo" config user.email 'task30-guard@example.invalid'
+    git -C "$fixture_repo" switch --quiet -c successor "$source_head"
+    cp "$repo_root/scripts/verify-mvp.sh" "$fixture_repo/scripts/verify-mvp.sh"
+    if ! git -C "$fixture_repo" diff --quiet -- scripts/verify-mvp.sh; then
+        git -C "$fixture_repo" add scripts/verify-mvp.sh
+        git -C "$fixture_repo" commit --quiet -m 'test: stage candidate guard under test'
+    fi
+    successor=$(git -C "$fixture_repo" rev-parse HEAD)
+
+    git -C "$fixture_repo" switch --quiet -c missing-second "$repair_fixture"
+    cp "$repo_root/scripts/verify-mvp.sh" "$fixture_repo/scripts/verify-mvp.sh"
+    git -C "$fixture_repo" add scripts/verify-mvp.sh
+    git -C "$fixture_repo" commit --quiet -m 'test: stage guard without snapshot repair'
+    missing_second=$(git -C "$fixture_repo" rev-parse HEAD)
+    git -C "$fixture_repo" switch --quiet -c extra-parent "$candidate_base"
+    git -C "$fixture_repo" commit --quiet --allow-empty -m 'test: extra coordinator parent'
+    extra_parent=$(git -C "$fixture_repo" rev-parse HEAD)
+
+    git -C "$fixture_repo" switch --quiet -C main "$candidate_base"
+    git -C "$fixture_repo" merge --quiet --no-ff -m 'test: coordinator candidate' "$successor"
+    coordinator=$(git -C "$fixture_repo" rev-parse HEAD)
+    git -C "$fixture_repo" switch --quiet -c missing-candidate "$candidate_base"
+    git -C "$fixture_repo" merge --quiet --no-ff -m 'test: missing repair candidate' "$missing_second"
+    missing_candidate=$(git -C "$fixture_repo" rev-parse HEAD)
+    git -C "$fixture_repo" switch --quiet -c topology-candidate "$candidate_base"
+    git -C "$fixture_repo" merge --quiet --no-ff -m 'test: three-parent candidate' "$successor" "$extra_parent"
+    topology_candidate=$(git -C "$fixture_repo" rev-parse HEAD)
+
+    fake_bin="$guard_fixture_root/fake-bin"
+    ledger="$guard_fixture_root/docker-ledger.log"
+    mkdir "$fake_bin"
+    cat > "$fake_bin/docker" <<'EOF'
+#!/bin/sh
+set -eu
+printf 'docker' >> "$FAKE_DOCKER_LEDGER"
+for arg; do printf ' %s' "$arg" >> "$FAKE_DOCKER_LEDGER"; done
+printf '\n' >> "$FAKE_DOCKER_LEDGER"
+case "$*" in
+    'ps -q --filter publish=28083') exit 0;;
+    'compose version') echo 'Docker Compose version fake'; exit 0;;
+    'ps -aq --filter label=com.docker.compose.project='*) exit 0;;
+    'network ls -q --filter label=com.docker.compose.project='*) exit 0;;
+    'volume ls -q --filter label=com.docker.compose.project='*) exit 0;;
+    'ps -q --filter publish=18083') exit 0;;
+    *) echo "unexpected fake docker command: $*" >&2; exit 99;;
+esac
+EOF
+    chmod 700 "$fake_bin/docker"
+    node22_bin=/Users/lapis0875/.nvm/versions/node/v22.23.2/bin
+    run_path="$fake_bin:$node22_bin:$PATH"
+    export FAKE_DOCKER_LEDGER="$ledger"
+
+    run_guard_case() {
+        case_name=$1 expected=$2 head=$3 main=$4 supplied=$5 dirty=$6 misleading=$7
+        git -C "$fixture_repo" switch --quiet --detach --force "$head"
+        git -C "$fixture_repo" update-ref refs/heads/main "$main"
+        dirty_path="$fixture_repo/.task30-candidate-dirty"
+        [ "$dirty" = false ] || : > "$dirty_path"
+        : > "$ledger"
+        output="$guard_fixture_root/$case_name.log"
+        : > "$output"
+        [ "$misleading" = false ] || echo 'PASS: stale cached output must not decide this case' >> "$output"
+        set +e
+        (cd "$fixture_repo" && PATH="$run_path" TASK30_DOCKER_AUTHORITY=approved \
+            TASK30_CANDIDATE_SHA="$supplied" TASK30_FRONTEND_PORT=28083 TASK30_NETWORK_OCTET=31 \
+            ./scripts/verify-mvp.sh --execute) >> "$output" 2>&1
+        case_status=$?
+        set -e
+        [ "$case_status" -ne 0 ] || self_fail "$case_name unexpectedly passed"
+        grep -F "$expected" "$output" >/dev/null || self_fail "$case_name missed expected failure: $expected"
+        if [ "$case_name" = positive ]; then
+            grep -F 'docker ps -q --filter publish=18083' "$ledger" >/dev/null || self_fail 'positive missed retained anchor call'
+            grep -F 'FAIL: expected exactly one retained 18083 container' "$output" >/dev/null || self_fail 'positive missed retained anchor sentinel'
+            rm -rf -- "$fixture_repo/.omo/evidence/task30"
+        elif [ -s "$ledger" ]; then
+            self_fail "$case_name reached fake Docker"
+        fi
+        [ "$dirty" = false ] || unlink -- "$dirty_path"
+        echo "PASS: guard_case=$case_name exit=$case_status fake_docker_ledger=$([ -s "$ledger" ] && echo reached-anchor || echo empty)"
+    }
+
+    run_guard_case positive 'FAIL: expected exactly one retained 18083 container' "$coordinator" "$coordinator" "$coordinator" false false
+    run_guard_case malformed 'FAIL: candidate SHA must be a full lowercase commit SHA' "$coordinator" "$coordinator" not-a-sha false false
+    run_guard_case ref 'FAIL: candidate SHA must be a full lowercase commit SHA' "$coordinator" "$coordinator" main false false
+    abbreviated=$(printf '%s' "$coordinator" | cut -c1-12)
+    run_guard_case abbreviated 'FAIL: candidate SHA must be a full lowercase commit SHA' "$coordinator" "$coordinator" "$abbreviated" false false
+    run_guard_case stale_state 'FAIL: candidate SHA does not match HEAD' "$successor" "$successor" "$coordinator" false false
+    run_guard_case source_tip 'FAIL: candidate must have exactly two parents' "$successor" "$successor" "$successor" false false
+    run_guard_case off_main 'FAIL: candidate is not refs/heads/main' "$coordinator" "$candidate_base" "$coordinator" false true
+    run_guard_case missing_repair 'FAIL: approved snapshot repair is not an ancestor' "$missing_candidate" "$missing_candidate" "$missing_candidate" false false
+    run_guard_case dirty_worktree 'FAIL: candidate worktree must be clean' "$coordinator" "$coordinator" "$coordinator" true false
+    run_guard_case topology_mismatch 'FAIL: candidate must have exactly two parents' "$topology_candidate" "$topology_candidate" "$topology_candidate" false false
+    echo "PASS: candidate=$coordinator topology=two-parent first-parent=$candidate_base detached=true real_docker_executed=false"
+}
+
 case ${1:-} in
+    --task30-candidate-guard-regression)
+        [ "$#" -eq 1 ] || { echo "usage: $0 --task30-candidate-guard-regression" >&2; exit 2; }
+        run_candidate_guard_regression
+        exit 0;;
     --task30-cleanup-child)
         [ "$#" -eq 6 ] || { echo "usage: $0 --task30-cleanup-child <stage> <candidate-sha> <fifo> <probe> <candidate-root>" >&2; exit 2; }
         candidate=$(git -C "$repo_root" rev-parse --verify "$3^{commit}") || { echo "FAIL: candidate is not a commit: $3" >&2; exit 1; }
