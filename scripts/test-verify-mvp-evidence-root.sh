@@ -334,7 +334,7 @@ run_cleanup_self_regression() {
 }
 
 run_candidate_guard_regression() {
-    candidate_base=dc3ce6056237f65d2b48c746499bdc62e87d10fe
+    candidate_base=0dcf151544677f03dce9046b58973daf464fc505
     repair_fixture=d4649dbf72532382541ace39f9285e7ff3b611c4
     source_head=$(git -C "$repo_root" rev-parse HEAD)
     set -- $(git -C "$repo_root" rev-list --parents -n 1 "$source_head")
