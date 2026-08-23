@@ -14,6 +14,9 @@ self_fifo_dir=
 self_log=
 self_candidate=
 self_stage=
+self_owned_stage=
+self_owned_probe=
+self_owned_root=
 self_reported_stage=
 self_reported_pid=
 self_reported_candidate=
@@ -53,31 +56,39 @@ cleanup_self_regression() {
     fi
     self_child=
 
-    if [ "$self_report_validated" = true ]; then
-        case "$self_reported_stage" in
+    if [ -n "$self_owned_probe" ]; then
+        case "$self_owned_stage" in
             probe-ready)
-                if [ -e "$self_reported_probe" ] && { [ -e "$self_reported_probe/.task30-evidence-probe-owned" ] || ! rmdir -- "$self_reported_probe"; }; then
+                if [ -e "$self_owned_probe" ] && { [ -e "$self_owned_probe/.task30-evidence-probe-owned" ] || ! rmdir -- "$self_owned_probe"; }; then
                     self_cleanup_ok=false
                 fi;;
             worktree-ready|worktree-ready-dirty)
-                if [ -e "$self_reported_probe" ]; then
-                    if ! marker_binds_candidate "$self_reported_probe/.task30-evidence-probe-owned" "$self_candidate"; then
+                if [ -e "$self_owned_probe" ]; then
+                    if ! marker_binds_candidate "$self_owned_probe/.task30-evidence-probe-owned" "$self_candidate"; then
                         self_cleanup_ok=false
-                    elif self_worktree_registered "$self_reported_root"; then
+                    elif self_worktree_registered "$self_owned_root"; then
                         if [ "$self_dirty_retained" = true ]; then
-                            git -C "$repo_root" worktree remove --force "$self_reported_root" >/dev/null 2>&1 || self_cleanup_ok=false
+                            git -C "$repo_root" worktree remove --force "$self_owned_root" >/dev/null 2>&1 || self_cleanup_ok=false
                         else
-                            git -C "$repo_root" worktree remove "$self_reported_root" >/dev/null 2>&1 || self_cleanup_ok=false
+                            git -C "$repo_root" worktree remove "$self_owned_root" >/dev/null 2>&1 || self_cleanup_ok=false
                         fi
                     fi
-                    if self_worktree_registered "$self_reported_root" || ! marker_binds_candidate "$self_reported_probe/.task30-evidence-probe-owned" "$self_candidate"; then
+                    if self_worktree_registered "$self_owned_root" || ! marker_binds_candidate "$self_owned_probe/.task30-evidence-probe-owned" "$self_candidate"; then
                         self_cleanup_ok=false
-                    elif ! rm -rf -- "$self_reported_probe"; then
+                    elif ! rm -rf -- "$self_owned_probe"; then
                         self_cleanup_ok=false
                     fi
                 fi;;
             *) self_cleanup_ok=false;;
         esac
+        if self_worktree_registered "$self_owned_root" || [ -e "$self_owned_probe" ]; then
+            self_cleanup_ok=false
+        else
+            self_owned_stage=
+            self_owned_probe=
+            self_owned_root=
+            self_report_validated=false
+        fi
     fi
 
     if [ -n "$self_log" ] && [ -e "$self_log" ]; then
@@ -140,16 +151,20 @@ trap 'exit 143' TERM
 cleanup_child() {
     stage=$1
     fifo=$2
+    probe=$3
+    candidate_root=$4
 
-    probe=$(mktemp -d /private/tmp/narae-task30-evidence-probe.XXXXXX)
+    owned_probe_path "$probe" || { echo "FAIL: cleanup child probe is not a canonical owned path" >&2; exit 1; }
+    [ -d "$probe" ] || { echo "FAIL: cleanup child probe does not exist" >&2; exit 1; }
+    [ "$candidate_root" = "$probe/candidate" ] || { echo "FAIL: cleanup child candidate root is not under probe" >&2; exit 1; }
     probe_acquired=true
     probe_marker="$probe/.task30-evidence-probe-owned"
-    candidate_root="$probe/candidate"
 
     case "$stage" in
-        probe-ready) ;;
+        probe-ready)
+            [ ! -e "$probe_marker" ] || { echo "FAIL: cleanup child probe-ready marker exists" >&2; exit 1; };;
         worktree-ready|worktree-ready-dirty)
-            printf '%s\n' "$candidate" > "$probe_marker"
+            marker_binds_candidate "$probe_marker" "$candidate" || { echo "FAIL: cleanup child marker does not bind candidate" >&2; exit 1; }
             git -C "$repo_root" worktree add --detach "$candidate_root" "$candidate" >/dev/null
             worktree_acquired=true;;
         *) echo "FAIL: unknown cleanup child stage: $stage" >&2; exit 2;;
@@ -172,6 +187,9 @@ run_cleanup_self_regression() {
     self_fifo_dir=
     self_log=
     self_stage=
+    self_owned_stage=
+    self_owned_probe=
+    self_owned_root=
     self_reported_stage=
     self_reported_pid=
     self_reported_candidate=
@@ -187,14 +205,31 @@ run_cleanup_self_regression() {
 
     for self_stage in probe-ready worktree-ready worktree-ready-dirty
     do
+        self_owned_stage=$self_stage
+        self_owned_probe=$(mktemp -d /private/tmp/narae-task30-evidence-probe.XXXXXX)
+        owned_probe_path "$self_owned_probe" || self_fail "parent-owned probe is not a canonical owned path"
+        self_owned_root="$self_owned_probe/candidate"
+        case "$self_stage" in
+            probe-ready)
+                [ ! -e "$self_owned_probe/.task30-evidence-probe-owned" ] || self_fail "parent-owned probe-ready marker exists";;
+            worktree-ready|worktree-ready-dirty)
+                printf '%s\n' "$self_candidate" > "$self_owned_probe/.task30-evidence-probe-owned"
+                marker_binds_candidate "$self_owned_probe/.task30-evidence-probe-owned" "$self_candidate" || self_fail "parent-owned marker does not bind candidate";;
+        esac
         self_log="$self_fifo.$self_stage.log"
-        "$0" --task30-cleanup-child "$self_stage" "$self_candidate" "$self_fifo" > "$self_log" 2>&1 &
+        "$0" --task30-cleanup-child "$self_stage" "$self_candidate" "$self_fifo" "$self_owned_probe" "$self_owned_root" > "$self_log" 2>&1 &
         self_child=$!
 
+        if [ "${TASK30_SELF_INTERRUPT_CHECKPOINT:-}" = 1 ] && [ "${TASK30_SELF_INTERRUPT_STAGE:-probe-ready}" = "$self_stage" ]; then
+            printf 'READY: boundary=prevalidation stage=%s child=%s fifo=%s probe=%s root=%s validated=%s\n' "$self_stage" "$self_child" "$self_fifo" "$self_owned_probe" "$self_owned_root" "$self_report_validated"
+            kill -STOP "$$"
+        fi
         IFS="$(printf '\t')" read -r reported_stage reported_pid reported_candidate reported_probe reported_root < "$self_fifo" || self_fail "child did not report readiness"
         [ "$reported_stage" = "$self_stage" ] || self_fail "reported stage mismatch"
         [ "$reported_pid" = "$self_child" ] || self_fail "reported child PID mismatch"
         [ "$reported_candidate" = "$self_candidate" ] || self_fail "reported candidate mismatch"
+        [ "$reported_probe" = "$self_owned_probe" ] || self_fail "reported probe does not match parent ownership"
+        [ "$reported_root" = "$self_owned_root" ] || self_fail "reported candidate root does not match parent ownership"
         owned_probe_path "$reported_probe" || self_fail "reported probe is not a canonical owned path"
         [ -d "$reported_probe" ] || self_fail "reported probe does not exist"
         [ "$reported_root" = "$reported_probe/candidate" ] || self_fail "reported candidate root is not under probe"
@@ -220,10 +255,6 @@ run_cleanup_self_regression() {
         if [ "$self_stage" = worktree-ready-dirty ]; then
             : > "$reported_root/.task30-untracked-blocker"
             self_dirty_retained=true
-        fi
-        if [ "${TASK30_SELF_INTERRUPT_CHECKPOINT:-}" = 1 ] && [ "${TASK30_SELF_INTERRUPT_STAGE:-probe-ready}" = "$self_stage" ]; then
-            printf 'READY: stage=%s child=%s fifo=%s probe=%s root=%s\n' "$self_stage" "$self_child" "$self_fifo" "$reported_probe" "$reported_root"
-            kill -STOP "$$"
         fi
         kill -TERM "$self_child"
         kill -CONT "$self_child"
@@ -260,6 +291,12 @@ run_cleanup_self_regression() {
 
         unlink -- "$self_log"
         self_log=
+        self_worktree_registered "$self_owned_root" && self_fail "parent-owned worktree registration remains"
+        [ ! -e "$self_owned_probe" ] || self_fail "parent-owned probe remains"
+        self_owned_stage=
+        self_owned_probe=
+        self_owned_root=
+        self_report_validated=false
     done
     unlink -- "$self_fifo"
     [ ! -e "$self_fifo" ] || self_fail "readiness FIFO remains"
@@ -270,9 +307,9 @@ run_cleanup_self_regression() {
 
 case ${1:-} in
     --task30-cleanup-child)
-        [ "$#" -eq 4 ] || { echo "usage: $0 --task30-cleanup-child <stage> <candidate-sha> <fifo>" >&2; exit 2; }
+        [ "$#" -eq 6 ] || { echo "usage: $0 --task30-cleanup-child <stage> <candidate-sha> <fifo> <probe> <candidate-root>" >&2; exit 2; }
         candidate=$(git -C "$repo_root" rev-parse --verify "$3^{commit}") || { echo "FAIL: candidate is not a commit: $3" >&2; exit 1; }
-        cleanup_child "$2" "$4"
+        cleanup_child "$2" "$4" "$5" "$6"
         exit 0;;
     --task30-cleanup-self-regression)
         [ "$#" -eq 2 ] || { echo "usage: $0 --task30-cleanup-self-regression <candidate-sha>" >&2; exit 2; }
