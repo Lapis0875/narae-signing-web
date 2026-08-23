@@ -8,6 +8,19 @@ probe_marker=
 candidate_root=
 probe_acquired=false
 worktree_acquired=false
+self_child=
+self_fifo=
+self_fifo_dir=
+self_log=
+self_candidate=
+self_stage=
+self_reported_stage=
+self_reported_pid=
+self_reported_candidate=
+self_reported_probe=
+self_reported_root=
+self_report_validated=false
+self_dirty_retained=false
 
 marker_binds_candidate() {
     marker_path=$1
@@ -17,10 +30,78 @@ marker_binds_candidate() {
     IFS= read -r marker_candidate < "$marker_path" && [ "$marker_candidate" = "$expected_candidate" ]
 }
 
+owned_probe_path() {
+    owned_probe=$(CDPATH= cd -- "$1" && pwd -P) || return 1
+    [ "$owned_probe" = "$1" ] || return 1
+    case "$owned_probe" in
+        /private/tmp/narae-task30-evidence-probe.*) return 0;;
+        *) return 1;;
+    esac
+}
+
+self_worktree_registered() {
+    git -C "$repo_root" worktree list --porcelain | grep -Fqx "worktree $1"
+}
+
+cleanup_self_regression() {
+    self_cleanup_ok=true
+
+    if [ -n "$self_child" ] && kill -0 "$self_child" 2>/dev/null; then
+        kill -TERM "$self_child" 2>/dev/null || self_cleanup_ok=false
+        kill -CONT "$self_child" 2>/dev/null || self_cleanup_ok=false
+        wait "$self_child" 2>/dev/null || :
+    fi
+    self_child=
+
+    if [ "$self_report_validated" = true ]; then
+        case "$self_reported_stage" in
+            probe-ready)
+                if [ -e "$self_reported_probe" ] && { [ -e "$self_reported_probe/.task30-evidence-probe-owned" ] || ! rmdir -- "$self_reported_probe"; }; then
+                    self_cleanup_ok=false
+                fi;;
+            worktree-ready|worktree-ready-dirty)
+                if [ -e "$self_reported_probe" ]; then
+                    if ! marker_binds_candidate "$self_reported_probe/.task30-evidence-probe-owned" "$self_candidate"; then
+                        self_cleanup_ok=false
+                    elif self_worktree_registered "$self_reported_root"; then
+                        if [ "$self_dirty_retained" = true ]; then
+                            git -C "$repo_root" worktree remove --force "$self_reported_root" >/dev/null 2>&1 || self_cleanup_ok=false
+                        else
+                            git -C "$repo_root" worktree remove "$self_reported_root" >/dev/null 2>&1 || self_cleanup_ok=false
+                        fi
+                    fi
+                    if self_worktree_registered "$self_reported_root" || ! marker_binds_candidate "$self_reported_probe/.task30-evidence-probe-owned" "$self_candidate"; then
+                        self_cleanup_ok=false
+                    elif ! rm -rf -- "$self_reported_probe"; then
+                        self_cleanup_ok=false
+                    fi
+                fi;;
+            *) self_cleanup_ok=false;;
+        esac
+    fi
+
+    if [ -n "$self_log" ] && [ -e "$self_log" ]; then
+        [ "$self_log" = "$self_fifo.$self_stage.log" ] && unlink -- "$self_log" || self_cleanup_ok=false
+    fi
+    self_log=
+    if [ -n "$self_fifo" ] && [ -e "$self_fifo" ]; then
+        [ "$self_fifo" = "$self_fifo_dir/ready" ] && unlink -- "$self_fifo" || self_cleanup_ok=false
+    fi
+    self_fifo=
+    if [ -n "$self_fifo_dir" ] && [ -e "$self_fifo_dir" ]; then
+        rmdir -- "$self_fifo_dir" || self_cleanup_ok=false
+    fi
+    self_fifo_dir=
+
+    [ "$self_cleanup_ok" = true ]
+}
+
 cleanup() {
     status=$?
     trap - EXIT HUP INT TERM
     set +e
+    self_cleanup_ok=true
+    cleanup_self_regression || self_cleanup_ok=false
     linked_worktree_removed=true
     marked_probe_removed=true
 
@@ -42,12 +123,13 @@ cleanup() {
         fi
     fi
 
-    if [ "$linked_worktree_removed" = true ] && [ "$marked_probe_removed" = true ]; then
+    if [ "$self_cleanup_ok" = true ] && [ "$linked_worktree_removed" = true ] && [ "$marked_probe_removed" = true ]; then
         echo "CLEANUP: linked_worktree_removed=true marked_probe_removed=true"
         exit "$status"
     fi
 
     echo "FAIL: cleanup proof failed incoming_status=$status linked_worktree_removed=$linked_worktree_removed marked_probe_removed=$marked_probe_removed" >&2
+    [ "$self_cleanup_ok" = true ] || echo 'FAIL: cleanup self-regression parent recovery failed' >&2
     exit 1
 }
 trap 'cleanup' EXIT
@@ -73,29 +155,35 @@ cleanup_child() {
         *) echo "FAIL: unknown cleanup child stage: $stage" >&2; exit 2;;
     esac
 
-    printf '%s\t%s\t%s\n' "$stage" "$probe" "$candidate_root" > "$fifo"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$stage" "$$" "$candidate" "$probe" "$candidate_root" > "$fifo"
     kill -STOP "$$"
     exit 0
 }
 
 self_fail() {
     echo "FAIL: cleanup self-regression: $1" >&2
-    if [ -n "${self_child:-}" ] && kill -0 "$self_child" 2>/dev/null; then
-        kill -TERM "$self_child" 2>/dev/null || :
-        kill -CONT "$self_child" 2>/dev/null || :
-        wait "$self_child" 2>/dev/null || :
-    fi
-    [ -z "${self_fifo:-}" ] || rm -f -- "$self_fifo"
-    [ -z "${self_log:-}" ] || rm -f -- "$self_log"
     exit 1
 }
 
 run_cleanup_self_regression() {
     self_candidate=$1
     self_child=
+    self_fifo=
+    self_fifo_dir=
     self_log=
-    self_fifo=$(mktemp -u /private/tmp/narae-task30-evidence-cleanup-ready.XXXXXX)
+    self_stage=
+    self_reported_stage=
+    self_reported_pid=
+    self_reported_candidate=
+    self_reported_probe=
+    self_reported_root=
+    self_report_validated=false
+    self_dirty_retained=false
+    self_fifo_dir=$(mktemp -d /private/tmp/narae-task30-evidence-cleanup-ready.XXXXXX)
+    chmod 700 "$self_fifo_dir" || self_fail "cannot secure readiness directory"
+    self_fifo="$self_fifo_dir/ready"
     (umask 077 && mkfifo "$self_fifo") || self_fail "cannot create readiness FIFO"
+    chmod 600 "$self_fifo" || self_fail "cannot secure readiness FIFO"
 
     for self_stage in probe-ready worktree-ready worktree-ready-dirty
     do
@@ -103,9 +191,11 @@ run_cleanup_self_regression() {
         "$0" --task30-cleanup-child "$self_stage" "$self_candidate" "$self_fifo" > "$self_log" 2>&1 &
         self_child=$!
 
-        IFS="$(printf '\t')" read -r reported_stage reported_probe reported_root < "$self_fifo" || self_fail "child did not report readiness"
+        IFS="$(printf '\t')" read -r reported_stage reported_pid reported_candidate reported_probe reported_root < "$self_fifo" || self_fail "child did not report readiness"
         [ "$reported_stage" = "$self_stage" ] || self_fail "reported stage mismatch"
-        case "$reported_probe" in /private/tmp/narae-task30-evidence-probe.*) ;; *) self_fail "reported probe is outside the owned prefix";; esac
+        [ "$reported_pid" = "$self_child" ] || self_fail "reported child PID mismatch"
+        [ "$reported_candidate" = "$self_candidate" ] || self_fail "reported candidate mismatch"
+        owned_probe_path "$reported_probe" || self_fail "reported probe is not a canonical owned path"
         [ -d "$reported_probe" ] || self_fail "reported probe does not exist"
         [ "$reported_root" = "$reported_probe/candidate" ] || self_fail "reported candidate root is not under probe"
 
@@ -120,8 +210,20 @@ run_cleanup_self_regression() {
                 git -C "$repo_root" worktree list --porcelain | grep -Fqx "worktree $reported_root" || self_fail "worktree-ready registration is missing";;
         esac
 
+        self_reported_stage=$reported_stage
+        self_reported_pid=$reported_pid
+        self_reported_candidate=$reported_candidate
+        self_reported_probe=$reported_probe
+        self_reported_root=$reported_root
+        self_report_validated=true
+
         if [ "$self_stage" = worktree-ready-dirty ]; then
             : > "$reported_root/.task30-untracked-blocker"
+            self_dirty_retained=true
+        fi
+        if [ "${TASK30_SELF_INTERRUPT_CHECKPOINT:-}" = 1 ] && [ "${TASK30_SELF_INTERRUPT_STAGE:-probe-ready}" = "$self_stage" ]; then
+            printf 'READY: stage=%s child=%s fifo=%s probe=%s root=%s\n' "$self_stage" "$self_child" "$self_fifo" "$reported_probe" "$reported_root"
+            kill -STOP "$$"
         fi
         kill -TERM "$self_child"
         kill -CONT "$self_child"
@@ -152,15 +254,18 @@ run_cleanup_self_regression() {
                 case "$reported_probe" in /private/tmp/narae-task30-evidence-probe.*) rm -rf -- "$reported_probe";; *) self_fail "dirty recovery probe is outside the owned prefix";; esac
                 [ ! -e "$reported_probe" ] || self_fail "dirty probe remains after recovery"
                 git -C "$repo_root" worktree list --porcelain | grep -Fqx "worktree $reported_root" && self_fail "dirty registration remains after recovery"
+                self_dirty_retained=false
                 echo 'PASS: cleanup_failure_dirty_worktree=validated-recovery exit=1 incoming_status=143 linked_worktree_removed=false marked_probe_removed=false';;
         esac
 
-        rm -f -- "$self_log"
+        unlink -- "$self_log"
         self_log=
     done
-    rm -f -- "$self_fifo"
+    unlink -- "$self_fifo"
     [ ! -e "$self_fifo" ] || self_fail "readiness FIFO remains"
     self_fifo=
+    rmdir -- "$self_fifo_dir" || self_fail "readiness directory remains"
+    self_fifo_dir=
 }
 
 case ${1:-} in
