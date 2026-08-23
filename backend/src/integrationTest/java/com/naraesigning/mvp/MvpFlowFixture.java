@@ -11,18 +11,20 @@ import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
 import io.minio.messages.Item;
+import jakarta.servlet.http.HttpSession;
 import java.awt.Color;
 import java.io.ByteArrayInputStream;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.time.Clock;
-import java.time.Instant;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import javax.imageio.ImageIO;
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
@@ -33,6 +35,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpSession;
+import org.springframework.session.Session;
+import org.springframework.session.SessionRepository;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 final class MvpFlowFixture {
@@ -70,24 +74,36 @@ final class MvpFlowFixture {
                 """, x, y, width, height, slotId);
     }
 
-    static MockHttpServletRequestBuilder admin(MockHttpServletRequestBuilder request) {
-        var session = new MockHttpSession();
-        AdminSessionContract.issue(session, OWNER, NOW.minusSeconds(60));
-        return request.session(session)
+    static <S extends Session> MockHttpServletRequestBuilder admin(
+            MockHttpServletRequestBuilder request, SessionRepository<S> sessions) {
+        return request.cookie(sessionCookie(sessions, "ADMIN_SESSION",
+                        session -> AdminSessionContract.issue(session, OWNER, NOW.minusSeconds(60))))
                 .cookie(new jakarta.servlet.http.Cookie(CsrfTokenContract.COOKIE_NAME, CSRF))
                 .header(CsrfTokenContract.HEADER_NAME, CSRF)
                 .secure(true);
     }
 
-    static MockHttpServletRequestBuilder signer(
-            MockHttpServletRequestBuilder request, UUID slotId, long revision, double aspect) {
-        var session = new MockHttpSession();
-        SignerSessionContract.issue(session, new SignerSessionContract.Value(
-                BOARD, slotId, 1, revision, aspect, NOW.minusSeconds(60)));
-        return request.session(session)
+    static <S extends Session> MockHttpServletRequestBuilder signer(
+            MockHttpServletRequestBuilder request, UUID slotId, long revision, double aspect,
+            SessionRepository<S> sessions) {
+        return request.cookie(sessionCookie(sessions, "SIGNER_SESSION",
+                        session -> SignerSessionContract.issue(session, new SignerSessionContract.Value(
+                                BOARD, slotId, 1, revision, aspect, NOW.minusSeconds(60)))))
                 .cookie(new jakarta.servlet.http.Cookie(CsrfTokenContract.COOKIE_NAME, CSRF))
                 .header(CsrfTokenContract.HEADER_NAME, CSRF)
                 .secure(true);
+    }
+
+    private static <S extends Session> jakarta.servlet.http.Cookie sessionCookie(
+            SessionRepository<S> sessions, String name, Consumer<HttpSession> issue) {
+        var transientSession = new MockHttpSession();
+        issue.accept(transientSession);
+        var persisted = sessions.createSession();
+        transientSession.getAttributeNames().asIterator().forEachRemaining(attribute ->
+                persisted.setAttribute(attribute, transientSession.getAttribute(attribute)));
+        persisted.setMaxInactiveInterval(Duration.ofSeconds(transientSession.getMaxInactiveInterval()));
+        sessions.save(persisted);
+        return new jakarta.servlet.http.Cookie(name, persisted.getId());
     }
 
     static byte[] png(Color color) throws Exception {
