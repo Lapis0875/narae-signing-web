@@ -96,8 +96,8 @@ const crypto = require("node:crypto"); let raw=""; process.stdin.on("data", c =>
     mounts: c.Mounts.map(m => ({ destination: m.Destination, mode: m.Mode, rw: m.RW,
       sourceHash: hash(m.Source), type: m.Type })).sort((a,b) => a.destination.localeCompare(b.destination)),
     name: c.Name, networks: Object.values(c.NetworkSettings.Networks).map(n => ({
-      endpointId: n.EndpointID, ip: n.IPAddress, networkId: n.NetworkID
-    })).sort((a,b) => a.networkId.localeCompare(b.networkId)), restartCount: c.RestartCount,
+      ip: n.IPAddress, networkId: n.NetworkID
+    })).sort((a,b) => a.networkId.localeCompare(b.networkId)),
     running: c.State.Running
   })).sort((a,b) => a.id.localeCompare(b.id)); process.stdout.write(JSON.stringify(rows) + "\n");
 });' < "$raw" > "$target"
