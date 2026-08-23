@@ -258,6 +258,14 @@ case "$data_root" in *'..'*|*//*|*/./*) fail "generated data root is not canonic
 evidence="$root/.omo/evidence/task30/execute-$run_id"
 [ ! -e "$evidence" ] || fail "Task30 evidence root already exists"
 mkdir -p -m 700 "$evidence"
+record_phase() {
+    case "$1" in
+        retained-preflight|backend-gradle|frontend-gates|compose-workflow-release|browser-flow) ;;
+        *) fail "invalid phase label" ;;
+    esac
+    printf 'phase=%s\n' "$1" > "$evidence/phase.log"
+}
+record_phase retained-preflight
 require_project_absent
 
 compose_file="$work/compose.yml"
@@ -292,6 +300,7 @@ cp "$work/original-before-health.tsv" "$evidence/original-before-health.tsv"
 for id in $original_running_ids; do run_bounded 120 docker stop "$id" >/dev/null; done
 
 testcontainers_snapshot "$work/testcontainers-before.txt"
+record_phase backend-gradle
 set +e
 backend_log="$work/backend-clean-check.log"
 run_bounded 1800 sh -c 'cd "$1" && ./gradlew clean check integrationTest' task30 "$root/backend" \
@@ -348,6 +357,7 @@ testcontainers_snapshot "$work/testcontainers-after.txt"
 cmp -s "$work/testcontainers-before.txt" "$work/testcontainers-after.txt" \
     || fail "Testcontainers resources remain after Gradle completion"
 
+record_phase frontend-gates
 run_bounded 900 sh -c 'cd "$1" && npm ci' task30 "$root/frontend" > "$evidence/frontend-install.log" 2>&1
 run_bounded 300 sh -c 'cd "$1" && npm run lint' task30 "$root/frontend" > "$evidence/frontend-lint.log" 2>&1
 run_bounded 300 sh -c 'cd "$1" && npm run typecheck' task30 "$root/frontend" > "$evidence/frontend-typecheck.log" 2>&1
@@ -357,6 +367,7 @@ run_bounded 1200 sh -c 'cd "$1" && PLAYWRIGHT_OUTPUT_DIR="$2" \
     npx playwright test --project=chromium --project=webkit --workers=1 --trace=off' \
     task30 "$root/frontend" "$work/playwright-mock-output" \
     > "$evidence/frontend-playwright.log" 2>&1
+record_phase compose-workflow-release
 compose_cleanup_required=true
 run_bounded 900 docker compose -p "$project" -f "$compose_file" up -d --wait \
     > "$evidence/compose-up.log" 2>&1
@@ -377,6 +388,7 @@ printf '%s\n' "$run_id" > "$playwright_dir/.task30-owned"
 playwright_config="$playwright_dir/playwright.config.mjs"
 cp "$playwright_template" "$playwright_config"
 export TASK30_E2E_DIR="$root/frontend/e2e" TASK30_PLAYWRIGHT_OUTPUT="$work/playwright-output"
+record_phase browser-flow
 run_bounded 900 python3 "$live_runner" "$compose_file" "$project" "http://127.0.0.1:$frontend_port" \
     "$playwright_config" "$work" > "$evidence/playwright-real.log" 2>&1
 exit 0
