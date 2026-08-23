@@ -288,7 +288,7 @@ final class MvpFlowIT {
         jdbc.update("""
                 update signature_slot set encrypted_strokes=?,strokes_nonce=?,strokes_key_version=?,submitted_at=?
                 where id=?
-                """, encrypted.ciphertext(), encrypted.nonce(), encrypted.keyVersion(), NOW, FIRST_SLOT);
+                """, encrypted.ciphertext(), encrypted.nonce(), encrypted.keyVersion(), java.sql.Timestamp.from(NOW), FIRST_SLOT);
         jdbc.update("update roster_entry set submitted=true where id=?", MvpFlowFixture.FIRST_ROSTER);
         jdbc.update("update board set status='CLOSED' where id=?", BOARD);
 

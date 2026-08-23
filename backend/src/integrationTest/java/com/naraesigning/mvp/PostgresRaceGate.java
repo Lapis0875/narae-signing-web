@@ -57,11 +57,16 @@ final class PostgresRaceGate implements AutoCloseable {
                         while (result.next()) counts.put(result.getString(1), result.getInt(2));
                         return counts;
                     });
-            if (waiters.getOrDefault("advisory", 0) >= 1
-                    && (waiters.getOrDefault("transactionid", 0) >= 1 || waiters.getOrDefault("tuple", 0) >= 1)) return;
+            if (hasTwoDatabaseWaiters(waiters)) return;
             LockSupport.parkNanos(Duration.ofMillis(10).toNanos());
         }
         throw new AssertionError("two requests did not reach PostgreSQL lock contention");
+    }
+
+    static boolean hasTwoDatabaseWaiters(Map<String, Integer> waiters) {
+        return waiters.getOrDefault("advisory", 0) >= 2
+                || (waiters.getOrDefault("advisory", 0) >= 1
+                && (waiters.getOrDefault("transactionid", 0) >= 1 || waiters.getOrDefault("tuple", 0) >= 1));
     }
 
     void release() throws SQLException {

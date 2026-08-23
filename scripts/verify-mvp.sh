@@ -4,7 +4,7 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 base=905014d0a78f12060e69872fd1fc21bed38e8453
-candidate_base=2293475d9618ae60055584ae9504a65d1587a01a
+candidate_base=d88c7fcb99383f01b30e421bb8cfaf609fa448d4
 repair_fixture=d4649dbf72532382541ace39f9285e7ff3b611c4
 repair_snapshot=14477473410c38dd8778405978fed8dd3b81f649
 mode=${1:---dry-run}
@@ -296,13 +296,6 @@ run_bounded 1800 sh -c 'cd "$1" && ./gradlew clean check integrationTest' task30
     > "$evidence/backend-clean-check.log" 2>&1
 gradle_status=$?
 set -e
-for report in test integrationTest; do
-    report_root="$root/backend/build/reports/tests/$report"
-    [ ! -d "$report_root" ] || {
-        mkdir -p "$evidence/backend/build/reports/tests"
-        cp -R "$report_root" "$evidence/backend/build/reports/tests/"
-    }
-done
 scan_retained_evidence || fail "retained evidence scan failed"
 [ "$gradle_status" -eq 0 ] || exit "$gradle_status"
 testcontainers_snapshot "$work/testcontainers-after.txt"
