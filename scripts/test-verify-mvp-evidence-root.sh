@@ -7,7 +7,7 @@ probe=
 probe_marker=
 candidate_root=
 probe_acquired=false
-worktree_acquired=false
+worktree_state=absent
 self_child=
 self_fifo=
 self_fifo_dir=
@@ -44,6 +44,12 @@ owned_probe_path() {
 
 self_worktree_registered() {
     git -C "$repo_root" worktree list --porcelain | grep -Fqx "worktree $1"
+}
+
+worktree_add_checkpoint() {
+    [ "${TASK30_WORKTREE_ADD_CHECKPOINT:-}" = 1 ] || return 0
+    printf 'READY: boundary=worktree-add pid=%s candidate=%s probe=%s root=%s state=%s\n' "$$" "$candidate" "$probe" "$candidate_root" "$worktree_state"
+    kill -STOP "$$"
 }
 
 cleanup_self_regression() {
@@ -116,12 +122,23 @@ cleanup() {
     linked_worktree_removed=true
     marked_probe_removed=true
 
-    if [ "$worktree_acquired" = true ]; then
-        linked_worktree_removed=false
-        if [ -n "$candidate_root" ] && git -C "$repo_root" worktree remove "$candidate_root" >/dev/null 2>&1; then
-            linked_worktree_removed=true
-        fi
-    fi
+    case "$worktree_state" in
+        absent) :;;
+        creating|owned)
+            linked_worktree_removed=false
+            if owned_probe_path "$probe" && [ "$candidate_root" = "$probe/candidate" ] && marker_binds_candidate "$probe_marker" "$candidate"; then
+                if self_worktree_registered "$candidate_root"; then
+                    if [ "$worktree_state" = creating ]; then
+                        git -C "$repo_root" worktree unlock "$candidate_root" >/dev/null 2>&1 || :
+                        git -C "$repo_root" worktree remove --force "$candidate_root" >/dev/null 2>&1 || :
+                    else
+                        git -C "$repo_root" worktree remove "$candidate_root" >/dev/null 2>&1 || :
+                    fi
+                fi
+                self_worktree_registered "$candidate_root" || linked_worktree_removed=true
+            fi;;
+        *) linked_worktree_removed=false;;
+    esac
 
     if [ "$probe_acquired" = true ]; then
         marked_probe_removed=false
@@ -165,8 +182,10 @@ cleanup_child() {
             [ ! -e "$probe_marker" ] || { echo "FAIL: cleanup child probe-ready marker exists" >&2; exit 1; };;
         worktree-ready|worktree-ready-dirty)
             marker_binds_candidate "$probe_marker" "$candidate" || { echo "FAIL: cleanup child marker does not bind candidate" >&2; exit 1; }
+            worktree_state=creating
             git -C "$repo_root" worktree add --detach "$candidate_root" "$candidate" >/dev/null
-            worktree_acquired=true;;
+            worktree_add_checkpoint
+            worktree_state=owned;;
         *) echo "FAIL: unknown cleanup child stage: $stage" >&2; exit 2;;
     esac
 
@@ -221,7 +240,7 @@ run_cleanup_self_regression() {
         self_child=$!
 
         if [ "${TASK30_SELF_INTERRUPT_CHECKPOINT:-}" = 1 ] && [ "${TASK30_SELF_INTERRUPT_STAGE:-probe-ready}" = "$self_stage" ]; then
-            printf 'READY: boundary=prevalidation stage=%s child=%s fifo=%s probe=%s root=%s validated=%s\n' "$self_stage" "$self_child" "$self_fifo" "$self_owned_probe" "$self_owned_root" "$self_report_validated"
+            printf 'READY: boundary=prevalidation parent=%s stage=%s child=%s fifo=%s probe=%s root=%s validated=%s\n' "$$" "$self_stage" "$self_child" "$self_fifo" "$self_owned_probe" "$self_owned_root" "$self_report_validated"
             kill -STOP "$$"
         fi
         IFS="$(printf '\t')" read -r reported_stage reported_pid reported_candidate reported_probe reported_root < "$self_fifo" || self_fail "child did not report readiness"
@@ -354,8 +373,10 @@ EOF
 chmod 700 "$fake_bin/docker"
 : > "$ledger"
 
+worktree_state=creating
 git -C "$repo_root" worktree add --detach "$candidate_root" "$candidate" >/dev/null
-worktree_acquired=true
+worktree_add_checkpoint
+worktree_state=owned
 [ -z "$(git -C "$candidate_root" status --porcelain=v1)" ] || { echo "FAIL: candidate worktree is dirty" >&2; exit 1; }
 [ ! -e "$candidate_root/.omo/evidence/task30" ] || { echo "FAIL: candidate already has Task30 evidence root" >&2; exit 1; }
 
