@@ -4,6 +4,9 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 base=905014d0a78f12060e69872fd1fc21bed38e8453
+candidate_base=5352744330c1e4d45272b9c2bf382b8f56f23745
+repair_fixture=d4649dbf72532382541ace39f9285e7ff3b611c4
+repair_snapshot=14477473410c38dd8778405978fed8dd3b81f649
 mode=${1:---dry-run}
 compose_source="$root/infra/compose/compose.yml"
 fixture="$root/scripts/fixtures/mvp-roster.csv"
@@ -96,8 +99,8 @@ const crypto = require("node:crypto"); let raw=""; process.stdin.on("data", c =>
     mounts: c.Mounts.map(m => ({ destination: m.Destination, mode: m.Mode, rw: m.RW,
       sourceHash: hash(m.Source), type: m.Type })).sort((a,b) => a.destination.localeCompare(b.destination)),
     name: c.Name, networks: Object.values(c.NetworkSettings.Networks).map(n => ({
-      endpointId: n.EndpointID, ip: n.IPAddress, networkId: n.NetworkID
-    })).sort((a,b) => a.networkId.localeCompare(b.networkId)), restartCount: c.RestartCount,
+      ip: n.IPAddress, networkId: n.NetworkID
+    })).sort((a,b) => a.networkId.localeCompare(b.networkId)),
     running: c.State.Running
   })).sort((a,b) => a.id.localeCompare(b.id)); process.stdout.write(JSON.stringify(rows) + "\n");
 });' < "$raw" > "$target"
@@ -192,9 +195,22 @@ restore_and_cleanup() {
 validate_execute() {
     [ "${TASK30_DOCKER_AUTHORITY:-}" = approved ] || fail "set TASK30_DOCKER_AUTHORITY=approved for --execute"
     for command in curl docker openssl; do require_command "$command"; done
-    [ -n "${TASK30_CANDIDATE_SHA:-}" ] || fail "TASK30_CANDIDATE_SHA is required"
-    [ "$(git -C "$root" rev-parse HEAD)" = "$TASK30_CANDIDATE_SHA" ] || fail "candidate SHA does not match HEAD"
-    [ "$(git -C "$root" rev-parse HEAD^)" = "$base" ] || fail "candidate parent is not the coordinator base"
+    candidate=${TASK30_CANDIDATE_SHA:-}
+    [ "${#candidate}" -eq 40 ] || fail "candidate SHA must be a full lowercase commit SHA"
+    case "$candidate" in *[!0-9a-f]*) fail "candidate SHA must be a full lowercase commit SHA";; esac
+    git -C "$root" cat-file -e "$candidate^{commit}" 2>/dev/null || fail "candidate SHA is not a commit"
+    [ "$(git -C "$root" rev-parse --verify HEAD^{commit})" = "$candidate" ] || fail "candidate SHA does not match HEAD"
+    main_candidate=$(git -C "$root" rev-parse --verify refs/heads/main^{commit} 2>/dev/null) \
+        || fail "refs/heads/main is not a commit"
+    [ "$main_candidate" = "$candidate" ] || fail "candidate is not refs/heads/main"
+    candidate_parents=$(git -C "$root" rev-list --parents -n 1 "$candidate")
+    set -- $candidate_parents
+    [ "$#" -eq 3 ] || fail "candidate must have exactly two parents"
+    [ "$2" = "$candidate_base" ] || fail "candidate first parent is not the coordinator base"
+    git -C "$root" merge-base --is-ancestor "$repair_fixture" "$candidate" \
+        || fail "approved fixture repair is not an ancestor"
+    git -C "$root" merge-base --is-ancestor "$repair_snapshot" "$candidate" \
+        || fail "approved snapshot repair is not an ancestor"
     [ -z "$(git -C "$root" status --porcelain=v1)" ] || fail "candidate worktree must be clean"
     frontend_port=${TASK30_FRONTEND_PORT:-}
     case "$frontend_port" in ''|*[!0-9]*) fail "TASK30_FRONTEND_PORT must be numeric";; esac

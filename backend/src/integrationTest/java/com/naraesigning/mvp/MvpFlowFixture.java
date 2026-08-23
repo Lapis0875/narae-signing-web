@@ -137,7 +137,8 @@ final class MvpFlowFixture {
             return new VersionedCryptoService(Map.of(1, new byte[32]), 1);
         }
 
-        @Bean(name = "authClock")
+        @Bean
+        @Primary
         ControlledClock task30Clock() {
             return new ControlledClock();
         }
