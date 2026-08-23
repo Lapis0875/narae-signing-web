@@ -71,16 +71,30 @@ validate_static() {
 }
 
 project_resources() {
-    run_bounded 30 docker ps -aq --filter "label=com.docker.compose.project=$project"
-    run_bounded 30 docker network ls -q --filter "label=com.docker.compose.project=$project"
-    run_bounded 30 docker volume ls -q --filter "label=com.docker.compose.project=$project"
+    if ! project_resource_containers=$(run_bounded 30 docker ps -aq --filter "label=com.docker.compose.project=$project"); then
+        return 1
+    fi
+    if ! project_resource_networks=$(run_bounded 30 docker network ls -q --filter "label=com.docker.compose.project=$project"); then
+        return 1
+    fi
+    if ! project_resource_volumes=$(run_bounded 30 docker volume ls -q --filter "label=com.docker.compose.project=$project"); then
+        return 1
+    fi
+    printf '%s\n%s\n%s\n' "$project_resource_containers" "$project_resource_networks" "$project_resource_volumes"
 }
 
-require_project_absent() { [ -z "$(project_resources)" ] || fail "isolated Compose project already has resources"; }
+require_project_absent() {
+    if ! project_resource_facts=$(project_resources); then
+        fail "isolated Compose project resource query failed"
+    fi
+    [ -z "$project_resource_facts" ] || fail "isolated Compose project already has resources"
+}
 
 health_facts() {
     target=$1
-    listener=$(run_bounded 30 docker ps -q --filter publish=18083)
+    if ! listener=$(run_bounded 30 docker ps -q --filter publish=18083); then
+        return 1
+    fi
     [ "$(printf '%s\n' "$listener" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] || return 1
     code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:18083/health) || return 1
     [ "$code" = 200 ] || return 1
@@ -90,8 +104,10 @@ health_facts() {
 snapshot_originals() {
     target=$1
     raw="$work/original-inspect.json"
-    run_bounded 60 docker inspect $original_ids > "$raw" || return 1
-    run_bounded 30 node -e '
+    if ! run_bounded 60 docker inspect $original_ids > "$raw"; then
+        return 1
+    fi
+    if ! run_bounded 30 node -e '
 const crypto = require("node:crypto"); let raw=""; process.stdin.on("data", c => raw += c); process.stdin.on("end", () => {
   const hash = value => crypto.createHash("sha256").update(value).digest("hex");
   const rows = JSON.parse(raw).map(c => ({
@@ -104,15 +120,23 @@ const crypto = require("node:crypto"); let raw=""; process.stdin.on("data", c =>
     running: c.State.Running
   })).sort((a,b) => a.id.localeCompare(b.id)); process.stdout.write(JSON.stringify(rows) + "\n");
 });' < "$raw" > "$target"
+    then
+        return 1
+    fi
 }
 
 testcontainers_snapshot() {
     target=$1
-    {
-        run_bounded 30 docker ps -aq --filter label=org.testcontainers=true
-        run_bounded 30 docker network ls -q --filter label=org.testcontainers=true
-        run_bounded 30 docker volume ls -q --filter label=org.testcontainers=true
-    } | sort > "$target"
+    if ! testcontainers_containers=$(run_bounded 30 docker ps -aq --filter label=org.testcontainers=true); then
+        return 1
+    fi
+    if ! testcontainers_networks=$(run_bounded 30 docker network ls -q --filter label=org.testcontainers=true); then
+        return 1
+    fi
+    if ! testcontainers_volumes=$(run_bounded 30 docker volume ls -q --filter label=org.testcontainers=true); then
+        return 1
+    fi
+    printf '%s\n%s\n%s\n' "$testcontainers_containers" "$testcontainers_networks" "$testcontainers_volumes" | sort > "$target"
 }
 
 scan_retained_evidence() {
@@ -146,7 +170,19 @@ restore_and_cleanup() {
     if [ "$compose_cleanup_required" = true ] && [ -n "$project" ] && [ -n "$compose_file" ]; then
         run_bounded 300 docker compose -p "$project" -f "$compose_file" down --volumes --remove-orphans \
             > "${evidence:-/dev/null}/compose-down.log" 2>&1
-        [ $? -eq 0 ] && [ -z "$(project_resources)" ] || { cleanup_failed=true; compose_clean=false; }
+        down_status=$?
+        if [ "$down_status" -eq 0 ]; then
+            if ! remaining_project_resources=$(project_resources); then
+                cleanup_failed=true
+                compose_clean=false
+            elif [ -n "$remaining_project_resources" ]; then
+                cleanup_failed=true
+                compose_clean=false
+            fi
+        else
+            cleanup_failed=true
+            compose_clean=false
+        fi
     fi
     if [ -n "$original_ids" ]; then
         for id in $original_running_ids; do
@@ -221,9 +257,13 @@ validate_execute() {
     case "$network_octet" in ''|*[!0-9]*) fail "TASK30_NETWORK_OCTET must be numeric";; esac
     [ "$network_octet" -ge 31 ] && [ "$network_octet" -le 223 ] && [ "$network_octet" -ne 172 ] \
         || fail "TASK30_NETWORK_OCTET is invalid or retained"
-    [ -z "$(run_bounded 30 docker ps -q --filter "publish=$frontend_port")" ] \
-        || fail "TASK30_FRONTEND_PORT is already published"
-    run_bounded 30 docker compose version >/dev/null
+    if ! frontend_listener=$(run_bounded 30 docker ps -q --filter "publish=$frontend_port"); then
+        fail "candidate frontend port query failed"
+    fi
+    [ -z "$frontend_listener" ] || fail "TASK30_FRONTEND_PORT is already published"
+    if ! run_bounded 30 docker compose version >/dev/null; then
+        fail "Docker Compose query failed"
+    fi
 }
 
 case "$mode:$-" in --execute:*x*) fail "xtrace is forbidden for --execute";; esac
@@ -260,12 +300,12 @@ evidence="$root/.omo/evidence/task30/execute-$run_id"
 mkdir -p -m 700 "$evidence"
 record_phase() {
     case "$1" in
-        retained-preflight|backend-gradle|frontend-gates|compose-workflow-release|browser-flow) ;;
+        isolated-project-resource-query|retained-listener-discovery|retained-project-member-discovery|retained-snapshot-health|retained-suspension|testcontainers-before-backend-snapshot|backend-gradle|frontend-gates|compose-workflow-release|browser-flow) ;;
         *) fail "invalid phase label" ;;
     esac
     printf 'phase=%s\n' "$1" > "$evidence/phase.log"
 }
-record_phase retained-preflight
+record_phase isolated-project-resource-query
 require_project_absent
 
 compose_file="$work/compose.yml"
@@ -279,27 +319,47 @@ export POSTGRES_PASSWORD="$(openssl rand -hex 24)" MINIO_ROOT_USER="task30$(open
 export MINIO_ROOT_PASSWORD="$(openssl rand -hex 24)" APP_MINIO_BUCKET=task30-mvp
 export APP_PUBLIC_ORIGIN="http://127.0.0.1:$frontend_port" APP_CRYPTO_KEY_VERSION=1
 
-anchor_ids=$(run_bounded 30 docker ps -q --filter publish=18083)
+record_phase retained-listener-discovery
+if ! anchor_ids=$(run_bounded 30 docker ps -q --filter publish=18083); then
+    fail "retained listener discovery failed"
+fi
 [ "$(printf '%s\n' "$anchor_ids" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] \
     || fail "expected exactly one retained 18083 container"
 anchor=$(printf '%s\n' "$anchor_ids" | sed -n '1p')
-retained_project=$(run_bounded 30 docker inspect \
-    --format '{{ index .Config.Labels "com.docker.compose.project" }}' "$anchor")
+record_phase retained-project-member-discovery
+if ! retained_project=$(run_bounded 30 docker inspect \
+    --format '{{ index .Config.Labels "com.docker.compose.project" }}' "$anchor"); then
+    fail "retained project discovery failed"
+fi
 if [ -n "$retained_project" ] && [ "$retained_project" != '<no value>' ]; then
-    original_ids=$(run_bounded 30 docker ps -aq --filter "label=com.docker.compose.project=$retained_project")
-    original_running_ids=$(run_bounded 30 docker ps -q --filter "label=com.docker.compose.project=$retained_project")
+    if ! original_ids=$(run_bounded 30 docker ps -aq --filter "label=com.docker.compose.project=$retained_project"); then
+        fail "retained project member discovery failed"
+    fi
+    if ! original_running_ids=$(run_bounded 30 docker ps -q --filter "label=com.docker.compose.project=$retained_project"); then
+        fail "retained project member discovery failed"
+    fi
 else
     original_ids=$anchor
     original_running_ids=$anchor
 fi
 [ -n "$original_ids" ] || fail "retained container set is empty"
-snapshot_originals "$work/original-before.json"
-health_facts "$work/original-before-health.tsv" || fail "retained /health did not return HTTP 200 before suspension"
+record_phase retained-snapshot-health
+snapshot_originals "$work/original-before.json" \
+    || fail "retained snapshot failed"
+health_facts "$work/original-before-health.tsv" \
+    || fail "retained health check failed"
 cp "$work/original-before.json" "$evidence/original-before.json"
 cp "$work/original-before-health.tsv" "$evidence/original-before-health.tsv"
-for id in $original_running_ids; do run_bounded 120 docker stop "$id" >/dev/null; done
+record_phase retained-suspension
+for id in $original_running_ids; do
+    if ! run_bounded 120 docker stop "$id" >/dev/null; then
+        fail "retained suspension failed"
+    fi
+done
 
-testcontainers_snapshot "$work/testcontainers-before.txt"
+record_phase testcontainers-before-backend-snapshot
+testcontainers_snapshot "$work/testcontainers-before.txt" \
+    || fail "pre-backend Testcontainers snapshot failed"
 record_phase backend-gradle
 set +e
 backend_log="$work/backend-clean-check.log"
@@ -353,7 +413,8 @@ fi
 rm -f "$work/background-upload-statuses" "$backend_log"
 scan_retained_evidence || fail "retained evidence scan failed"
 [ "$gradle_status" -eq 0 ] || exit "$gradle_status"
-testcontainers_snapshot "$work/testcontainers-after.txt"
+testcontainers_snapshot "$work/testcontainers-after.txt" \
+    || fail "post-backend Testcontainers snapshot failed"
 cmp -s "$work/testcontainers-before.txt" "$work/testcontainers-after.txt" \
     || fail "Testcontainers resources remain after Gradle completion"
 
