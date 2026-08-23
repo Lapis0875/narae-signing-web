@@ -60,7 +60,7 @@ class FlywaySchemaIT {
                     + UUID.randomUUID() + "','" + roster + "','PLACED',0.1,0.1,0.3,0.2)");
 
             // Then: versions/tables exist, retry is clean, and duplicate identity is rejected.
-            assertThat(first.migrationsExecuted).isEqualTo(3);
+            assertThat(first.migrationsExecuted).isEqualTo(4);
             assertThat(second.migrationsExecuted).isZero();
             try (var tables = connection.getMetaData().getTables(null, "public", "%", new String[] {"TABLE"})) {
                 var names = new java.util.HashSet<String>();
