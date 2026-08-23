@@ -46,16 +46,19 @@ final class PostgresRaceGate implements AutoCloseable {
         var deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
         while (System.nanoTime() < deadline) {
             Map<String, Integer> waiters = observer.query("""
-                    select wait_event_type, count(*)::integer
+                    select wait_event, count(*)::integer
                     from pg_stat_activity
-                    where datname = current_database() and wait_event_type in ('Advisory', 'Lock')
-                    group by wait_event_type
+                    where datname = current_database()
+                      and wait_event_type = 'Lock'
+                      and wait_event in ('advisory', 'transactionid', 'tuple')
+                    group by wait_event
                     """, result -> {
                         var counts = new java.util.HashMap<String, Integer>();
                         while (result.next()) counts.put(result.getString(1), result.getInt(2));
                         return counts;
                     });
-            if (waiters.getOrDefault("Advisory", 0) >= 1 && waiters.getOrDefault("Lock", 0) >= 1) return;
+            if (waiters.getOrDefault("advisory", 0) >= 1
+                    && (waiters.getOrDefault("transactionid", 0) >= 1 || waiters.getOrDefault("tuple", 0) >= 1)) return;
             LockSupport.parkNanos(Duration.ofMillis(10).toNanos());
         }
         throw new AssertionError("two requests did not reach PostgreSQL lock contention");
