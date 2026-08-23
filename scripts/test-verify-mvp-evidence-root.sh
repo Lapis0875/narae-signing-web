@@ -491,6 +491,11 @@ printf '<html>unrelated</html>\n' > build/reports/tests/unrelated/index.html
 case "${TASK30_FAKE_GRADLE_REPORT_CASE:-clean}" in
     safe) printf '%s\n' '<testsuite><testcase><failure message="background-upload-status=503"/></testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
     duplicate) printf '%s\n' '<testsuite><testcase><failure message="background-upload-status=503"/></testcase><testcase><failure message="background-upload-status=503"/></testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
+    mirrored_text) printf '%s\n' '<testsuite><testcase><failure message="background-upload-status=503">background-upload-status=503</failure></testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
+    text_only) printf '%s\n' '<testsuite><testcase><failure>background-upload-status=503</failure></testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
+    mismatch_text) printf '%s\n' '<testsuite><testcase><failure message="background-upload-status=503">background-upload-status=502</failure></testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
+    non_failure_attribute) printf '%s\n' '<testsuite><testcase message="background-upload-status=503"/></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
+    tail) printf '%s\n' '<testsuite><testcase><failure message="background-upload-status=503"/>background-upload-status=503</testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
     short) printf '%s\n' '<testsuite><testcase><failure message="background-upload-status=50"/></testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
     long) printf '%s\n' '<testsuite><testcase><failure message="background-upload-status=5000"/></testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
     prefixed) printf '%s\n' '<testsuite><testcase><failure message="xbackground-upload-status=503"/></testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
@@ -579,7 +584,7 @@ EOF
         [ "$(printf '%s\n' "$leaf" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] || self_fail "$case_name evidence leaf count is invalid"
         [ "$(stat -f '%Lp' "$leaf")" = 700 ] || self_fail "$case_name evidence leaf mode is not 700"
         case "$case_name" in
-            safe|duplicate)
+            safe|duplicate|mirrored_text)
                 [ "$(sed -n '1p' "$leaf/background-upload-status-summary.log")" = 'background-upload-status=503' ] \
                     || self_fail 'safe status summary is missing after preserved Gradle exit=23'
                 [ "$(wc -l < "$leaf/background-upload-status-summary.log" | tr -d ' ')" -eq 1 ] \
@@ -607,6 +612,11 @@ EOF
 
     run_backend_case safe 23 safe
     run_backend_case duplicate 23 duplicate
+    run_backend_case mirrored_text 23 mirrored_text
+    run_backend_case text_only 1 text_only
+    run_backend_case mismatch_text 1 mismatch_text
+    run_backend_case non_failure_attribute 1 non_failure_attribute
+    run_backend_case tail 1 tail
     run_backend_case short 1 short
     run_backend_case long 1 long
     run_backend_case prefixed 1 prefixed

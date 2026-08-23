@@ -319,15 +319,20 @@ def statuses(value):
 for report in Path(sys.argv[1]).rglob("*.xml"):
     for element in element_tree.parse(report).getroot().iter():
         failure = element.tag.rsplit("}", 1)[-1] == "failure"
+        message_values = []
         for name, value in element.attrib.items():
             values = statuses(value)
             if values and not (failure and name == "message"):
                 raise SystemExit("unexpected background upload status marker")
+            if failure and name == "message":
+                message_values = values
             for value in values:
                 print(f"background-upload-status={value}")
-        for value in (element.text, element.tail):
-            if value and statuses(value):
-                raise SystemExit("unexpected background upload status marker")
+        text_values = statuses(element.text or "")
+        if text_values and (not failure or text_values != message_values):
+            raise SystemExit("unexpected background upload status marker")
+        if element.tail and statuses(element.tail):
+            raise SystemExit("unexpected background upload status marker")
 PY
     if [ -s "$work/background-upload-statuses" ]; then
         LC_ALL=C sort -u "$work/background-upload-statuses" | awk '
