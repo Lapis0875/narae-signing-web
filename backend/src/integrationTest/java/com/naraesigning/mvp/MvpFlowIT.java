@@ -188,9 +188,10 @@ final class MvpFlowIT {
         // Given: the real HTTP upload stores a normalized image through MinIO.
         var upload = new MockMultipartFile("file", "synthetic.png", "image/png",
                 MvpFlowFixture.png(new Color(128, 192, 224)));
-        assertThat(mvc.perform(MvpFlowFixture.admin(multipart(
+        var uploadStatus = mvc.perform(MvpFlowFixture.admin(multipart(
                 "/api/v1/admin/boards/{board}/background", BOARD).file(upload)))
-                .andReturn().getResponse().getStatus()).isEqualTo(200);
+                .andReturn().getResponse().getStatus();
+        assertThat(uploadStatus).as("background-upload-status=%03d", uploadStatus).isEqualTo(200);
         var assetId = jdbc.queryForObject("select background_asset_id from board where id=?", UUID.class, BOARD);
         var encryptedKey = new EncryptedValue(
                 jdbc.queryForObject("select encrypted_object_key from background_asset where id=?", byte[].class, assetId),
@@ -229,8 +230,10 @@ final class MvpFlowIT {
         // Given: confirmed HTTP deletion creates one durable job for an object stored in real MinIO.
         var upload = new MockMultipartFile("file", "synthetic.png", "image/png",
                 MvpFlowFixture.png(Color.LIGHT_GRAY));
-        mvc.perform(MvpFlowFixture.admin(multipart(
-                "/api/v1/admin/boards/{board}/background", BOARD).file(upload)));
+        var uploadStatus = mvc.perform(MvpFlowFixture.admin(multipart(
+                "/api/v1/admin/boards/{board}/background", BOARD).file(upload)))
+                .andReturn().getResponse().getStatus();
+        assertThat(uploadStatus).as("background-upload-status=%03d", uploadStatus).isEqualTo(200);
         var assetId = jdbc.queryForObject("select background_asset_id from board where id=?", UUID.class, BOARD);
         var encryptedKey = new EncryptedValue(
                 jdbc.queryForObject("select encrypted_object_key from background_asset where id=?", byte[].class, assetId),

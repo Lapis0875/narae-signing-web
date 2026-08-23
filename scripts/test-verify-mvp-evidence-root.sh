@@ -343,7 +343,7 @@ run_cleanup_self_regression() {
 }
 
 run_candidate_guard_regression() {
-    candidate_base=d88c7fcb99383f01b30e421bb8cfaf609fa448d4
+    candidate_base=4a48dc56428ff620b41d187b69ebe7d80d3a7ce9
     repair_fixture=d4649dbf72532382541ace39f9285e7ff3b611c4
     source_head=$(git -C "$repo_root" rev-parse HEAD)
     set -- $(git -C "$repo_root" rev-list --parents -n 1 "$source_head")
@@ -464,7 +464,7 @@ EOF
 }
 
 run_backend_report_regression() {
-    candidate_base=d88c7fcb99383f01b30e421bb8cfaf609fa448d4
+    candidate_base=4a48dc56428ff620b41d187b69ebe7d80d3a7ce9
     backend_fixture_root=$(mktemp -d /private/tmp/narae-task30-backend-report.XXXXXX)
     fixture_repo="$backend_fixture_root/repo"
     fake_bin="$backend_fixture_root/fake-bin"
@@ -474,17 +474,31 @@ run_backend_report_regression() {
     git -C "$fixture_repo" config user.name 'Task30 Backend Report Fixture'
     git -C "$fixture_repo" config user.email 'task30-backend-report@example.invalid'
     git -C "$fixture_repo" switch --quiet -c successor "$candidate_base"
-    cp "$repo_root/scripts/verify-mvp.sh" "$fixture_repo/scripts/verify-mvp.sh"
+    case "${TASK30_BACKEND_REGRESSION_SOURCE:-candidate}" in
+        candidate) cp "$repo_root/scripts/verify-mvp.sh" "$fixture_repo/scripts/verify-mvp.sh";;
+        base)
+            git -C "$repo_root" show "$candidate_base:scripts/verify-mvp.sh" \
+                | sed "s/^candidate_base=.*/candidate_base=$candidate_base/" > "$fixture_repo/scripts/verify-mvp.sh";;
+        *) self_fail 'backend regression source is invalid';;
+    esac
     cat > "$fixture_repo/backend/gradlew" <<'EOF'
 #!/bin/sh
 set -eu
-mkdir -p build/reports/tests/test build/reports/tests/integrationTest build/reports/tests/unrelated
+mkdir -p build/reports/tests/test build/reports/tests/integrationTest build/reports/tests/unrelated build/test-results/integrationTest
 printf '<html>unit</html>\n' > build/reports/tests/test/index.html
 printf '<html>integration</html>\n' > build/reports/tests/integrationTest/index.html
 printf '<html>unrelated</html>\n' > build/reports/tests/unrelated/index.html
-if [ "${TASK30_FAKE_GRADLE_REPORT_CASE:-clean}" = secret ]; then
-    printf '%s%s\n' 'synthetic-pass' 'word-phrase' >> build/reports/tests/test/index.html
-fi
+case "${TASK30_FAKE_GRADLE_REPORT_CASE:-clean}" in
+    safe) printf '%s\n' '<testsuite><testcase><failure message="background-upload-status=503"/></testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
+    duplicate) printf '%s\n' '<testsuite><testcase><failure message="background-upload-status=503"/></testcase><testcase><failure message="background-upload-status=503"/></testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
+    short) printf '%s\n' '<testsuite><testcase><failure message="background-upload-status=50"/></testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
+    long) printf '%s\n' '<testsuite><testcase><failure message="background-upload-status=5000"/></testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
+    prefixed) printf '%s\n' '<testsuite><testcase><failure message="xbackground-upload-status=503"/></testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
+    suffixed) printf '%s\n' '<testsuite><testcase><failure message="background-upload-status=503x"/></testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
+    malformed_xml) printf '%s\n' '<testsuite><testcase><failure message="background-upload-status=503"></testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
+    unsafe) printf '%s\n' '<testsuite><testcase><failure message="unsafe-body=must-not-retain"/></testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
+    secret) printf '%s%s\n' 'synthetic-pass' 'word-phrase' >> build/reports/tests/test/index.html;;
+esac
 printf 'gradle\n' >> "$FAKE_ORDERING_MARKER"
 case "${TASK30_FAKE_GRADLE_REPORT_CASE:-clean}" in
     success) exit 0;;
@@ -564,9 +578,23 @@ EOF
         leaf=$(find "$fixture_repo/.omo/evidence/task30" -mindepth 1 -maxdepth 1 -type d -name 'execute-*' -print)
         [ "$(printf '%s\n' "$leaf" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] || self_fail "$case_name evidence leaf count is invalid"
         [ "$(stat -f '%Lp' "$leaf")" = 700 ] || self_fail "$case_name evidence leaf mode is not 700"
-        [ -f "$leaf/backend-clean-check.log" ] || self_fail "$case_name backend log is missing"
+        case "$case_name" in
+            safe|duplicate)
+                [ "$(sed -n '1p' "$leaf/background-upload-status-summary.log")" = 'background-upload-status=503' ] \
+                    || self_fail 'safe status summary is missing after preserved Gradle exit=23'
+                [ "$(wc -l < "$leaf/background-upload-status-summary.log" | tr -d ' ')" -eq 1 ] \
+                    || self_fail 'safe status summary is not deduplicated'
+                ! grep -F 'unsafe-body=must-not-retain' "$leaf/background-upload-status-summary.log" >/dev/null \
+                    || self_fail 'safe status summary retained unsafe text';;
+            *) [ ! -e "$leaf/background-upload-status-summary.log" ] \
+                || self_fail "$case_name unexpectedly retained a status summary";;
+        esac
+        [ ! -e "$leaf/backend-clean-check.log" ] || self_fail "$case_name raw backend log was retained"
         [ ! -e "$leaf/backend/build/reports" ] || self_fail "$case_name report tree was retained"
-        echo "PASS: backend_report_case=$case_name exit=$case_status leaf=$leaf mode=700 report_tree=absent ordering=suspended-before-gradle"
+        [ ! -e "$leaf/backend/build/test-results" ] || self_fail "$case_name XML tree was retained"
+        [ -z "$(find "$leaf" -type f \( -name '*.html' -o -name '*.xml' \) -print -quit)" ] \
+            || self_fail "$case_name retained an HTML or XML artifact"
+        echo "PASS: backend_report_case=$case_name exit=$case_status leaf=$leaf mode=700 report_tree=absent xml_tree=absent summary_only=true ordering=suspended-before-gradle"
         run_id=${leaf##*/execute-}
         for marker in /private/tmp/narae-task30-verify.*/.task30-owned /private/tmp/narae-task30-data.*/.task30-owned
         do
@@ -577,6 +605,14 @@ EOF
         done
     }
 
+    run_backend_case safe 23 safe
+    run_backend_case duplicate 23 duplicate
+    run_backend_case short 1 short
+    run_backend_case long 1 long
+    run_backend_case prefixed 1 prefixed
+    run_backend_case suffixed 1 suffixed
+    run_backend_case malformed_xml 1 malformed_xml
+    run_backend_case unsafe 23 unsafe
     run_backend_case clean 23 clean
     run_backend_case secret 23 secret
     run_backend_case success 24 success
