@@ -21,4 +21,10 @@ final class PostgresRaceGateTest {
         assertThat(PostgresRaceGate.hasTwoDatabaseWaiters(Map.of("advisory", 1))).isFalse();
         assertThat(PostgresRaceGate.hasTwoDatabaseWaiters(Map.of("tuple", 2))).isFalse();
     }
+
+    @Test
+    void mapsTimeoutObservationStateToFixedMarkers() {
+        assertThat(PostgresRaceGate.timeoutMarker(false)).isEqualTo("race-observer-timeout=EMPTY");
+        assertThat(PostgresRaceGate.timeoutMarker(true)).isEqualTo("race-observer-timeout=INCOMPLETE");
+    }
 }
