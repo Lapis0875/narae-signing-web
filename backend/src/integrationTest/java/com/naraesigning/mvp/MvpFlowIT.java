@@ -20,6 +20,7 @@ import com.naraesigning.background.BackgroundCleanupWorker;
 import com.naraesigning.crypto.CryptoContext;
 import com.naraesigning.crypto.EncryptedValue;
 import com.naraesigning.crypto.VersionedCryptoService;
+import com.naraesigning.slot.CanonicalAspect;
 import io.minio.BucketExistsArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
@@ -158,6 +159,15 @@ final class MvpFlowIT {
         var placedSlot = jdbc.queryForObject(
                 "select id from signature_slot where placement_status='PLACED'", UUID.class);
         jdbc.update("update board set status='OPEN' where id=?", BOARD);
+        var signerAspect = jdbc.queryForObject("""
+                select s.width * b.canvas_width as width, s.height * b.canvas_height as height
+                from signature_slot s
+                join roster_entry r on r.id = s.roster_entry_id
+                join board b on b.id = r.board_id
+                where s.id=?
+                """, (result, row) -> CanonicalAspect.from(
+                        result.getBigDecimal("width"), result.getBigDecimal("height"))
+                        .value().doubleValue(), placedSlot);
         var submissionStart = new CountDownLatch(1);
         var signature = "{\"version\":1,\"strokes\":[{\"points\":[{\"x\":0,\"y\":500000},{\"x\":1000000,\"y\":500000}]}]}";
 
@@ -173,7 +183,7 @@ final class MvpFlowIT {
                 try {
                     return mvc.perform(MvpFlowFixture.signer(
                             post("/api/v1/public/signing-session/signature").contentType(APPLICATION_JSON)
-                                    .content(signature), placedSlot, 1, 4d / 3d, sessionRepository))
+                                    .content(signature), placedSlot, 1, signerAspect, sessionRepository))
                             .andReturn().getResponse().getStatus();
                 } finally {
                     submissionCompleted[index].set(true);
