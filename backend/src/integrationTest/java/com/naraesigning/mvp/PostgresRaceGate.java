@@ -9,6 +9,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 final class PostgresRaceGate implements AutoCloseable {
     private static final long LOCK_KEY = 30_030L;
+    private static final String TIMEOUT_EMPTY = "race-observer-timeout=EMPTY";
+    private static final String TIMEOUT_INCOMPLETE = "race-observer-timeout=INCOMPLETE";
     private final JdbcTemplate observer;
     private final Connection owner;
 
@@ -44,6 +46,7 @@ final class PostgresRaceGate implements AutoCloseable {
 
     void awaitTwoDatabaseWaiters() {
         var deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        var observedRelevantWaiter = false;
         while (System.nanoTime() < deadline) {
             Map<String, Integer> waiters = observer.query("""
                     select wait_event, count(*)::integer
@@ -57,10 +60,15 @@ final class PostgresRaceGate implements AutoCloseable {
                         while (result.next()) counts.put(result.getString(1), result.getInt(2));
                         return counts;
                     });
+            if (!waiters.isEmpty()) observedRelevantWaiter = true;
             if (hasTwoDatabaseWaiters(waiters)) return;
             LockSupport.parkNanos(Duration.ofMillis(10).toNanos());
         }
-        throw new AssertionError("two requests did not reach PostgreSQL lock contention");
+        throw new AssertionError(timeoutMarker(observedRelevantWaiter));
+    }
+
+    static String timeoutMarker(boolean observedRelevantWaiter) {
+        return observedRelevantWaiter ? TIMEOUT_INCOMPLETE : TIMEOUT_EMPTY;
     }
 
     static boolean hasTwoDatabaseWaiters(Map<String, Integer> waiters) {
