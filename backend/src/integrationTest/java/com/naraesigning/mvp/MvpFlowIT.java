@@ -206,7 +206,12 @@ final class MvpFlowIT {
         var stored = MvpFlowFixture.object(minio, objectKey);
 
         // Then: neither database nor object storage exposes the PNG plaintext.
-        assertThat(encryptedKey.ciphertext()).doesNotContain(keyBytes);
+        assertThat(java.util.stream.IntStream.rangeClosed(0,
+                encryptedKey.ciphertext().length - keyBytes.length)
+                .anyMatch(start -> Arrays.equals(encryptedKey.ciphertext(), start,
+                        start + keyBytes.length, keyBytes, 0, keyBytes.length)))
+                .as("ciphertext must not contain plaintext object-key sequence")
+                .isFalse();
         assertThat(stored).startsWith(new byte[] {0x4e, 0x42, 0x47, 0x31});
         assertThat(Arrays.copyOf(stored, 4))
                 .isNotEqualTo(new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47});
