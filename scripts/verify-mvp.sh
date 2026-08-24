@@ -160,6 +160,15 @@ for path in (target,) if target.is_file() else target.rglob("*"):
 ' "$target"
 }
 
+validate_backend_receipt() {
+    [ -f "$backend_receipt" ] || fail "MISSING_CANDIDATE_RECEIPT"
+    [ ! -L "$backend_receipt" ] || fail "STALE_AGGREGATION"
+    [ "$(wc -c < "$backend_receipt" | tr -d ' ')" -eq 76 ] \
+        || fail "STALE_AGGREGATION"
+    [ "$(cat "$backend_receipt")" = "candidate=$candidate
+attempt=$run_id" ] || fail "STALE_AGGREGATION"
+}
+
 restore_and_cleanup() {
     incoming=$1
     trap - EXIT
@@ -363,11 +372,26 @@ testcontainers_snapshot "$work/testcontainers-before.txt" \
 record_phase backend-gradle
 set +e
 backend_log="$work/backend-clean-check.log"
-run_bounded 1800 sh -c 'cd "$1" && ./gradlew clean check integrationTest' task30 "$root/backend" \
+backend_receipt="$work/backend-candidate-receipt"
+backend_receipt_init="$work/backend-receipt.init.gradle"
+cat > "$backend_receipt_init" <<'EOF'
+def receipt = System.getenv("TASK30_BACKEND_RECEIPT")
+def candidate = System.getenv("TASK30_CANDIDATE_SHA")
+def attempt = System.getenv("TASK30_BACKEND_ATTEMPT")
+if (receipt == null || candidate == null || attempt == null) {
+    throw new GradleException("TASK30_BACKEND_RECEIPT_CONFIGURATION_INVALID")
+}
+gradle.buildFinished {
+    new File(receipt).text = "candidate=${candidate}\nattempt=${attempt}\n"
+}
+EOF
+TASK30_BACKEND_RECEIPT="$backend_receipt" TASK30_BACKEND_ATTEMPT="$run_id" \
+    run_bounded 1800 sh -c 'cd "$1" && ./gradlew --init-script "$2" clean check integrationTest' task30 "$root/backend" "$backend_receipt_init" \
     > "$backend_log" 2>&1
 gradle_status=$?
 set -e
 scan_retained_evidence "$backend_log" || fail "backend log scan failed"
+validate_backend_receipt
 if [ -d "$root/backend/build/test-results" ]; then
     python3 - "$root/backend/build/test-results" <<'PY' > "$work/background-upload-statuses"
 import re
@@ -410,7 +434,7 @@ PY
         ' > "$evidence/background-upload-status-summary.log" || fail "background upload status summary is invalid"
     fi
 fi
-rm -f "$work/background-upload-statuses" "$backend_log"
+rm -f "$work/background-upload-statuses" "$backend_log" "$backend_receipt" "$backend_receipt_init"
 scan_retained_evidence || fail "retained evidence scan failed"
 [ "$gradle_status" -eq 0 ] || exit "$gradle_status"
 testcontainers_snapshot "$work/testcontainers-after.txt" \

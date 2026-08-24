@@ -503,8 +503,19 @@ case "${TASK30_FAKE_GRADLE_REPORT_CASE:-clean}" in
     malformed_xml) printf '%s\n' '<testsuite><testcase><failure message="background-upload-status=503"></testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
     unsafe) printf '%s\n' '<testsuite><testcase><failure message="unsafe-body=must-not-retain"/></testcase></testsuite>' > build/test-results/integrationTest/TEST-MvpFlowIT.xml;;
     secret) printf '%s%s\n' 'synthetic-pass' 'word-phrase' >> build/reports/tests/test/index.html;;
+    no_producer|stale_receipt|missing_receipt) :;;
 esac
 printf 'gradle\n' >> "$FAKE_ORDERING_MARKER"
+case "${TASK30_FAKE_GRADLE_REPORT_CASE:-clean}" in
+    stale_receipt)
+        stale_receipt_root="$(dirname "$TASK30_BACKEND_RECEIPT")/prior-candidate"
+        mkdir "$stale_receipt_root"
+        printf 'candidate=%s\nattempt=%s\n' '0000000000000000000000000000000000000000' "$TASK30_BACKEND_ATTEMPT" > "$stale_receipt_root/backend-candidate-receipt"
+        cp "$stale_receipt_root/backend-candidate-receipt" "$TASK30_BACKEND_RECEIPT";;
+    missing_receipt) rm -f "$TASK30_BACKEND_RECEIPT";;
+    no_producer) :;;
+    *) java -cp "$TASK30_GROOVY_CLASSPATH" groovy.ui.GroovyMain "$TASK30_RECEIPT_PRODUCER_PROBE";;
+esac
 case "${TASK30_FAKE_GRADLE_REPORT_CASE:-clean}" in
     success) exit 0;;
     *) exit 23;;
@@ -517,6 +528,30 @@ EOF
     git -C "$fixture_repo" switch --quiet -C main "$candidate_base"
     git -C "$fixture_repo" merge --quiet --no-ff -m 'test: coordinator candidate' "$successor"
     candidate=$(git -C "$fixture_repo" rev-parse HEAD)
+
+    groovy_jar=$(find "$HOME/.gradle/wrapper/dists" -type f -name 'groovy-*.jar' -print | sort | sed -n '1p')
+    [ -n "$groovy_jar" ] || self_fail 'Gradle Groovy runtime is unavailable'
+    groovy_classpath=$(printf '%s:' "${groovy_jar%/*}"/*.jar)
+    groovy_classpath=${groovy_classpath%:}
+    producer_probe="$backend_fixture_root/receipt-producer.groovy"
+    producer_receipt="$backend_fixture_root/receipt-producer.out"
+    producer_expected="$backend_fixture_root/receipt-producer.expected"
+    producer_attempt=0123456789abcdef
+    printf '%s\n' 'class GradleException extends RuntimeException { GradleException(String message) { super(message) } }' \
+        'class GradleProbe { void buildFinished(Closure callback) { callback.call() } }' \
+        'def gradle = new GradleProbe()' > "$producer_probe"
+    awk '
+        /^def receipt = System.getenv\("TASK30_BACKEND_RECEIPT"\)$/ { copy = 1 }
+        copy && /^EOF$/ { exit }
+        copy { print }
+    ' "$repo_root/scripts/verify-mvp.sh" >> "$producer_probe"
+    TASK30_BACKEND_RECEIPT="$producer_receipt" TASK30_CANDIDATE_SHA="$candidate" \
+        TASK30_BACKEND_ATTEMPT="$producer_attempt" \
+        java -cp "$groovy_classpath" groovy.ui.GroovyMain "$producer_probe"
+    printf 'candidate=%s\nattempt=%s\n' "$candidate" "$producer_attempt" > "$producer_expected"
+    cmp -s "$producer_expected" "$producer_receipt" \
+        || self_fail 'backend receipt producer output is not exact'
+    echo 'PASS: backend_receipt_producer=gradle-groovy bytes=76 newline_shape=exact'
 
     mkdir "$fake_bin"
     cat > "$fake_bin/docker" <<'EOF'
@@ -563,6 +598,7 @@ EOF
         case_name=$1
         expected_status=$2
         report_case=$3
+        expected_failure=${4:-}
         rm -rf -- "$fixture_repo/.omo/evidence/task30"
         : > "$ledger"
         : > "$ordering"
@@ -571,10 +607,13 @@ EOF
         (cd "$fixture_repo" && PATH="$run_path" TASK30_DOCKER_AUTHORITY=approved \
             TASK30_CANDIDATE_SHA="$candidate" TASK30_FRONTEND_PORT=28083 TASK30_NETWORK_OCTET=31 \
             TASK30_FAKE_GRADLE_REPORT_CASE="$report_case" FAKE_ORDERING_MARKER="$ordering" \
+            TASK30_RECEIPT_PRODUCER_PROBE="$producer_probe" TASK30_GROOVY_CLASSPATH="$groovy_classpath" \
             ./scripts/verify-mvp.sh --execute) > "$output" 2>&1
         case_status=$?
         set -e
         [ "$case_status" -eq "$expected_status" ] || self_fail "$case_name exit is $case_status, expected $expected_status"
+        [ -z "$expected_failure" ] || grep -F "$expected_failure" "$output" >/dev/null \
+            || self_fail "$case_name did not fail with $expected_failure"
         [ "$(sed -n '1p' "$ordering")" = suspended ] || self_fail "$case_name Gradle started before retained-stack suspension"
         [ "$(sed -n '2p' "$ordering")" = gradle ] || self_fail "$case_name missing fake Gradle ordering marker"
         grep -F 'docker stop anchor' "$ledger" >/dev/null || self_fail "$case_name missed retained-stack stop"
@@ -599,7 +638,7 @@ EOF
         [ ! -e "$leaf/backend/build/test-results" ] || self_fail "$case_name XML tree was retained"
         [ -z "$(find "$leaf" -type f \( -name '*.html' -o -name '*.xml' \) -print -quit)" ] \
             || self_fail "$case_name retained an HTML or XML artifact"
-        echo "PASS: backend_report_case=$case_name exit=$case_status leaf=$leaf mode=700 report_tree=absent xml_tree=absent summary_only=true ordering=suspended-before-gradle"
+        echo "PASS: backend_report_case=$case_name exit=$case_status leaf=$leaf mode=700 report_tree=absent xml_tree=absent summary_only=true ordering=suspended-before-gradle receipt_failure=${expected_failure:-none}"
         run_id=${leaf##*/execute-}
         for marker in /private/tmp/narae-task30-verify.*/.task30-owned /private/tmp/narae-task30-data.*/.task30-owned
         do
@@ -625,6 +664,9 @@ EOF
     run_backend_case unsafe 23 unsafe
     run_backend_case clean 23 clean
     run_backend_case secret 23 secret
+    run_backend_case stale_receipt 1 stale_receipt STALE_AGGREGATION
+    run_backend_case missing_receipt 1 missing_receipt MISSING_CANDIDATE_RECEIPT
+    run_backend_case no_producer 1 no_producer MISSING_CANDIDATE_RECEIPT
     run_backend_case success 24 success
     echo 'PASS: backend_report_regression real_docker_executed=false'
 }
