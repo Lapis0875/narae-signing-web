@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.imageio.ImageIO;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -164,15 +165,30 @@ final class MvpFlowIT {
         List<Integer> submissionStatuses;
         try (var workers = Executors.newVirtualThreadPerTaskExecutor();
                 var gate = PostgresRaceGate.install(jdbc)) {
+            var submissionEntered = new AtomicBoolean[] {new AtomicBoolean(), new AtomicBoolean()};
+            var submissionCompleted = new AtomicBoolean[] {new AtomicBoolean(), new AtomicBoolean()};
             var calls = java.util.stream.IntStream.range(0, 2).mapToObj(index -> workers.submit(() -> {
                 submissionStart.await();
-                return mvc.perform(MvpFlowFixture.signer(
-                        post("/api/v1/public/signing-session/signature").contentType(APPLICATION_JSON)
-                                .content(signature), placedSlot, 1, 4d / 3d, sessionRepository))
-                        .andReturn().getResponse().getStatus();
+                submissionEntered[index].set(true);
+                try {
+                    return mvc.perform(MvpFlowFixture.signer(
+                            post("/api/v1/public/signing-session/signature").contentType(APPLICATION_JSON)
+                                    .content(signature), placedSlot, 1, 4d / 3d, sessionRepository))
+                            .andReturn().getResponse().getStatus();
+                } finally {
+                    submissionCompleted[index].set(true);
+                }
             })).toList();
             submissionStart.countDown();
-            gate.awaitTwoDatabaseWaiters();
+            try {
+                gate.awaitTwoDatabaseWaiters();
+            } catch (AssertionError error) {
+                if (!"race-observer-timeout=EMPTY".equals(error.getMessage())) throw error;
+                var allSubmissionWorkersEntered = submissionEntered[0].get() && submissionEntered[1].get();
+                var allSubmissionWorkersCompleted = submissionCompleted[0].get() && submissionCompleted[1].get();
+                throw new AssertionError(submissionEmptyTimeoutMarker(
+                        allSubmissionWorkersEntered, allSubmissionWorkersCompleted));
+            }
             gate.release();
             submissionStatuses = calls.stream().map(call -> {
                 try { return call.get(); } catch (Exception exception) { throw new AssertionError(exception); }
@@ -184,6 +200,12 @@ final class MvpFlowIT {
         assertThat(jdbc.queryForObject("select count(*) from signature_slot where encrypted_strokes is not null",
                 Integer.class)).isEqualTo(1);
         assertThat(jdbc.queryForObject("select count(*) from roster_entry where submitted", Integer.class)).isEqualTo(1);
+    }
+
+    static String submissionEmptyTimeoutMarker(boolean allWorkersEntered, boolean allWorkersCompleted) {
+        if (!allWorkersEntered) return "race-submission-timeout=EMPTY_NOT_ENTERED";
+        if (allWorkersCompleted) return "race-submission-timeout=EMPTY_EARLY_COMPLETE";
+        return "race-submission-timeout=EMPTY_PENDING";
     }
 
     @Test
