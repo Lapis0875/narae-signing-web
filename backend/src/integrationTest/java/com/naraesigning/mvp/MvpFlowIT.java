@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.imageio.ImageIO;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -45,6 +46,7 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.session.jdbc.JdbcIndexedSessionRepository;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.ActiveProfiles;
@@ -85,6 +87,7 @@ final class MvpFlowIT {
     @Autowired ApplicationContext context;
     @Autowired MvpFlowFixture.ControlledClock clock;
     @Autowired MvpFlowFixture.ControlledObjectStore objects;
+    @Autowired JdbcIndexedSessionRepository sessionRepository;
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
@@ -139,7 +142,8 @@ final class MvpFlowIT {
             var calls = List.of(FIRST_SLOT, SECOND_SLOT).stream().map(slot -> workers.submit(() -> {
                 start.await();
                 return mvc.perform(MvpFlowFixture.admin(patch("/api/v1/admin/boards/{board}/slots/{slot}", BOARD, slot)
-                        .contentType(APPLICATION_JSON).content(body))).andReturn().getResponse().getStatus();
+                        .contentType(APPLICATION_JSON).content(body), sessionRepository))
+                        .andReturn().getResponse().getStatus();
             })).toList();
             start.countDown();
             gate.awaitTwoDatabaseWaiters();
@@ -161,15 +165,30 @@ final class MvpFlowIT {
         List<Integer> submissionStatuses;
         try (var workers = Executors.newVirtualThreadPerTaskExecutor();
                 var gate = PostgresRaceGate.install(jdbc)) {
+            var submissionEntered = new AtomicBoolean[] {new AtomicBoolean(), new AtomicBoolean()};
+            var submissionCompleted = new AtomicBoolean[] {new AtomicBoolean(), new AtomicBoolean()};
             var calls = java.util.stream.IntStream.range(0, 2).mapToObj(index -> workers.submit(() -> {
                 submissionStart.await();
-                return mvc.perform(MvpFlowFixture.signer(
-                        post("/api/v1/public/signing-session/signature").contentType(APPLICATION_JSON)
-                                .content(signature), placedSlot, 1, 4d / 3d))
-                        .andReturn().getResponse().getStatus();
+                submissionEntered[index].set(true);
+                try {
+                    return mvc.perform(MvpFlowFixture.signer(
+                            post("/api/v1/public/signing-session/signature").contentType(APPLICATION_JSON)
+                                    .content(signature), placedSlot, 1, 4d / 3d, sessionRepository))
+                            .andReturn().getResponse().getStatus();
+                } finally {
+                    submissionCompleted[index].set(true);
+                }
             })).toList();
             submissionStart.countDown();
-            gate.awaitTwoDatabaseWaiters();
+            try {
+                gate.awaitTwoDatabaseWaiters();
+            } catch (AssertionError error) {
+                if (!"race-observer-timeout=EMPTY".equals(error.getMessage())) throw error;
+                var allSubmissionWorkersEntered = submissionEntered[0].get() && submissionEntered[1].get();
+                var allSubmissionWorkersCompleted = submissionCompleted[0].get() && submissionCompleted[1].get();
+                throw new AssertionError(submissionEmptyTimeoutMarker(
+                        allSubmissionWorkersEntered, allSubmissionWorkersCompleted));
+            }
             gate.release();
             submissionStatuses = calls.stream().map(call -> {
                 try { return call.get(); } catch (Exception exception) { throw new AssertionError(exception); }
@@ -183,14 +202,21 @@ final class MvpFlowIT {
         assertThat(jdbc.queryForObject("select count(*) from roster_entry where submitted", Integer.class)).isEqualTo(1);
     }
 
+    static String submissionEmptyTimeoutMarker(boolean allWorkersEntered, boolean allWorkersCompleted) {
+        if (!allWorkersEntered) return "race-submission-timeout=EMPTY_NOT_ENTERED";
+        if (allWorkersCompleted) return "race-submission-timeout=EMPTY_EARLY_COMPLETE";
+        return "race-submission-timeout=EMPTY_PENDING";
+    }
+
     @Test
     void backgroundCiphertextCleanupRetryNeverDeletesCurrentObject() throws Exception {
         // Given: the real HTTP upload stores a normalized image through MinIO.
         var upload = new MockMultipartFile("file", "synthetic.png", "image/png",
                 MvpFlowFixture.png(new Color(128, 192, 224)));
-        assertThat(mvc.perform(MvpFlowFixture.admin(multipart(
-                "/api/v1/admin/boards/{board}/background", BOARD).file(upload)))
-                .andReturn().getResponse().getStatus()).isEqualTo(200);
+        var uploadStatus = mvc.perform(MvpFlowFixture.admin(multipart(
+                "/api/v1/admin/boards/{board}/background", BOARD).file(upload), sessionRepository))
+                .andReturn().getResponse().getStatus();
+        assertThat(uploadStatus).as("background-upload-status=%03d", uploadStatus).isEqualTo(200);
         var assetId = jdbc.queryForObject("select background_asset_id from board where id=?", UUID.class, BOARD);
         var encryptedKey = new EncryptedValue(
                 jdbc.queryForObject("select encrypted_object_key from background_asset where id=?", byte[].class, assetId),
@@ -202,7 +228,12 @@ final class MvpFlowIT {
         var stored = MvpFlowFixture.object(minio, objectKey);
 
         // Then: neither database nor object storage exposes the PNG plaintext.
-        assertThat(encryptedKey.ciphertext()).doesNotContain(keyBytes);
+        assertThat(java.util.stream.IntStream.rangeClosed(0,
+                encryptedKey.ciphertext().length - keyBytes.length)
+                .anyMatch(start -> Arrays.equals(encryptedKey.ciphertext(), start,
+                        start + keyBytes.length, keyBytes, 0, keyBytes.length)))
+                .as("ciphertext must not contain plaintext object-key sequence")
+                .isFalse();
         assertThat(stored).startsWith(new byte[] {0x4e, 0x42, 0x47, 0x31});
         assertThat(Arrays.copyOf(stored, 4))
                 .isNotEqualTo(new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47});
@@ -229,8 +260,10 @@ final class MvpFlowIT {
         // Given: confirmed HTTP deletion creates one durable job for an object stored in real MinIO.
         var upload = new MockMultipartFile("file", "synthetic.png", "image/png",
                 MvpFlowFixture.png(Color.LIGHT_GRAY));
-        mvc.perform(MvpFlowFixture.admin(multipart(
-                "/api/v1/admin/boards/{board}/background", BOARD).file(upload)));
+        var uploadStatus = mvc.perform(MvpFlowFixture.admin(multipart(
+                "/api/v1/admin/boards/{board}/background", BOARD).file(upload), sessionRepository))
+                .andReturn().getResponse().getStatus();
+        assertThat(uploadStatus).as("background-upload-status=%03d", uploadStatus).isEqualTo(200);
         var assetId = jdbc.queryForObject("select background_asset_id from board where id=?", UUID.class, BOARD);
         var encryptedKey = new EncryptedValue(
                 jdbc.queryForObject("select encrypted_object_key from background_asset where id=?", byte[].class, assetId),
@@ -239,7 +272,8 @@ final class MvpFlowIT {
         var objectKey = new String(crypto.decrypt(encryptedKey,
                 CryptoContext.field("background-asset", assetId.toString(), "object-key")), StandardCharsets.UTF_8);
         var response = mvc.perform(MvpFlowFixture.admin(delete("/api/v1/admin/boards/{board}", BOARD)
-                .contentType(APPLICATION_JSON).content("{\"confirmed\":true}"))).andReturn().getResponse();
+                .contentType(APPLICATION_JSON).content("{\"confirmed\":true}"), sessionRepository))
+                .andReturn().getResponse();
         assertThat(response.getStatus()).isEqualTo(204);
         assertThat(jdbc.queryForObject("select status from board where id=?", String.class, BOARD))
                 .isEqualTo("DELETING");
@@ -280,7 +314,7 @@ final class MvpFlowIT {
         var background = new MockMultipartFile("file", "synthetic.png", "image/png",
                 MvpFlowFixture.png(new Color(128, 192, 224)));
         mvc.perform(MvpFlowFixture.admin(multipart(
-                "/api/v1/admin/boards/{board}/background", BOARD).file(background)));
+                "/api/v1/admin/boards/{board}/background", BOARD).file(background), sessionRepository));
         MvpFlowFixture.place(jdbc, FIRST_SLOT, "0.25", "0.25", "0.50", "0.25");
         var strokes = "{\"version\":1,\"strokes\":[{\"points\":[{\"x\":0,\"y\":500000},{\"x\":1000000,\"y\":500000}]}]}";
         var encrypted = crypto.encrypt(strokes.getBytes(StandardCharsets.UTF_8),
@@ -294,7 +328,7 @@ final class MvpFlowIT {
 
         // When: the admin downloads through the production HTTP controller.
         var response = mvc.perform(MvpFlowFixture.admin(
-                get("/api/v1/admin/boards/{board}/final.png", BOARD))).andReturn().getResponse();
+                get("/api/v1/admin/boards/{board}/final.png", BOARD), sessionRepository)).andReturn().getResponse();
         var png = response.getContentAsByteArray();
         var image = ImageIO.read(new ByteArrayInputStream(png));
 

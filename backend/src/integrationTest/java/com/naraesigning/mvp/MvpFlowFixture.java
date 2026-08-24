@@ -2,6 +2,7 @@ package com.naraesigning.mvp;
 
 import com.naraesigning.background.BackgroundObjectStore;
 import com.naraesigning.background.BackgroundStoreException;
+import com.naraesigning.crypto.CryptoContext;
 import com.naraesigning.crypto.VersionedCryptoService;
 import com.naraesigning.security.CsrfTokenContract;
 import com.naraesigning.session.AdminSessionContract;
@@ -11,18 +12,21 @@ import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
 import io.minio.messages.Item;
+import jakarta.servlet.http.HttpSession;
 import java.awt.Color;
 import java.io.ByteArrayInputStream;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
-import java.time.Instant;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import javax.imageio.ImageIO;
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
@@ -33,6 +37,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpSession;
+import org.springframework.session.Session;
+import org.springframework.session.SessionRepository;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 final class MvpFlowFixture {
@@ -45,10 +51,13 @@ final class MvpFlowFixture {
     static final Instant NOW = Instant.parse("2026-08-23T00:00:00Z");
     static final String BUCKET = "task30-mvp";
     static final String CSRF = "synthetic-csrf";
+    private static final VersionedCryptoService CRYPTO = new VersionedCryptoService(Map.of(1, new byte[32]), 1);
 
     private MvpFlowFixture() {}
 
     static void reset(JdbcTemplate jdbc) {
+        var shareToken = CRYPTO.encrypt("fixture-share-token".getBytes(StandardCharsets.US_ASCII),
+                CryptoContext.shareToken(BOARD, 1));
         jdbc.execute("truncate table board_deletion_job, background_asset, signature_slot, "
                 + "roster_entry, board, admin_user cascade");
         jdbc.update("insert into admin_user(id,email,password_hash,status) values (?,?,?,'ACTIVE')",
@@ -57,7 +66,7 @@ final class MvpFlowFixture {
                 insert into board(id,owner_id,title,status,canvas_width,canvas_height,
                     share_token_lookup_hash,share_token_ciphertext,share_token_nonce,share_token_key_version)
                 values (?,?,?,'DRAFT',800,600,?,?,?,1)
-                """, BOARD, OWNER, "통합 검증 행사", bytes(1), bytes(2), bytes(3));
+                """, BOARD, OWNER, "통합 검증 행사", bytes(1), shareToken.ciphertext(), shareToken.nonce());
         insertRoster(jdbc, FIRST_ROSTER, FIRST_SLOT, 11);
         insertRoster(jdbc, SECOND_ROSTER, SECOND_SLOT, 21);
     }
@@ -70,24 +79,36 @@ final class MvpFlowFixture {
                 """, x, y, width, height, slotId);
     }
 
-    static MockHttpServletRequestBuilder admin(MockHttpServletRequestBuilder request) {
-        var session = new MockHttpSession();
-        AdminSessionContract.issue(session, OWNER, NOW.minusSeconds(60));
-        return request.session(session)
+    static <S extends Session> MockHttpServletRequestBuilder admin(
+            MockHttpServletRequestBuilder request, SessionRepository<S> sessions) {
+        return request.cookie(sessionCookie(sessions, "ADMIN_SESSION",
+                        session -> AdminSessionContract.issue(session, OWNER, NOW.minusSeconds(60))))
                 .cookie(new jakarta.servlet.http.Cookie(CsrfTokenContract.COOKIE_NAME, CSRF))
                 .header(CsrfTokenContract.HEADER_NAME, CSRF)
                 .secure(true);
     }
 
-    static MockHttpServletRequestBuilder signer(
-            MockHttpServletRequestBuilder request, UUID slotId, long revision, double aspect) {
-        var session = new MockHttpSession();
-        SignerSessionContract.issue(session, new SignerSessionContract.Value(
-                BOARD, slotId, 1, revision, aspect, NOW.minusSeconds(60)));
-        return request.session(session)
+    static <S extends Session> MockHttpServletRequestBuilder signer(
+            MockHttpServletRequestBuilder request, UUID slotId, long revision, double aspect,
+            SessionRepository<S> sessions) {
+        return request.cookie(sessionCookie(sessions, "SIGNER_SESSION",
+                        session -> SignerSessionContract.issue(session, new SignerSessionContract.Value(
+                                BOARD, slotId, 1, revision, aspect, NOW.minusSeconds(60)))))
                 .cookie(new jakarta.servlet.http.Cookie(CsrfTokenContract.COOKIE_NAME, CSRF))
                 .header(CsrfTokenContract.HEADER_NAME, CSRF)
                 .secure(true);
+    }
+
+    private static <S extends Session> jakarta.servlet.http.Cookie sessionCookie(
+            SessionRepository<S> sessions, String name, Consumer<HttpSession> issue) {
+        var transientSession = new MockHttpSession();
+        issue.accept(transientSession);
+        var persisted = sessions.createSession();
+        transientSession.getAttributeNames().asIterator().forEachRemaining(attribute ->
+                persisted.setAttribute(attribute, transientSession.getAttribute(attribute)));
+        persisted.setMaxInactiveInterval(Duration.ofSeconds(transientSession.getMaxInactiveInterval()));
+        sessions.save(persisted);
+        return new jakarta.servlet.http.Cookie(name, persisted.getId());
     }
 
     static byte[] png(Color color) throws Exception {
@@ -134,7 +155,7 @@ final class MvpFlowFixture {
     static class CryptoConfiguration {
         @Bean
         VersionedCryptoService versionedCryptoService() {
-            return new VersionedCryptoService(Map.of(1, new byte[32]), 1);
+            return CRYPTO;
         }
 
         @Bean
