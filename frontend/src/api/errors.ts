@@ -64,6 +64,21 @@ export class ApiError extends Error {
   }
 }
 
+export function describeError(error: unknown): string {
+  if (error instanceof ApiError) {
+    return `${error.message} (HTTP ${error.status}, ${error.code})`;
+  }
+  if (error instanceof z.ZodError) {
+    const issue = error.issues.at(0);
+    if (issue === undefined) {
+      return "응답 형식 오류입니다.";
+    }
+    const path = issue.path.length === 0 ? "응답" : issue.path.join(".");
+    return `응답 형식 오류입니다. ${path}: ${issue.message}`;
+  }
+  return "알 수 없는 오류가 발생했습니다. 다시 시도해 주세요.";
+}
+
 function codeFromBackend(code: string, status: number): ApiErrorCode {
   switch (code) {
     case "AUTHENTICATION_FAILED":

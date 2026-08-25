@@ -1,8 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react"
 import { Link, useParams } from "react-router-dom"
-import { presentError } from "../../../api/errorPresentation.ts"
-import { ApiError } from "../../../api/errors.ts"
+import { ApiError, describeError } from "../../../api/errors.ts"
 import { AppShell } from "../../../components/AppShell.tsx"
 import { ForbiddenView, LoadingView } from "../../../components/AsyncViews.tsx"
 import { useToast } from "../../../components/Toast.tsx"
@@ -50,7 +49,7 @@ export function BoardEditorRoute({ actionExtensions }: BoardEditorRouteProps) {
   const initialLoadError = board.error ?? roster.error
 
   useEffect(() => {
-    if (initialLoadError !== null) showToast(`편집 화면을 불러오지 못했습니다.\n${presentError(initialLoadError).message}`)
+    if (initialLoadError !== null) showToast(`편집 화면을 불러오지 못했습니다. ${describeError(initialLoadError)}`)
   }, [initialLoadError, showToast])
 
   const refreshSnapshot = useCallback(async () => {
@@ -58,9 +57,12 @@ export function BoardEditorRoute({ actionExtensions }: BoardEditorRouteProps) {
   }, [background.refetch, board.refetch, roster.refetch])
   const reportFailure = async (error: unknown) => {
     setSaveState("failed")
-    showToast(error instanceof ApiError && error.status === 409
-      ? "서버 배치와 충돌했습니다. 현재 입력을 유지했습니다. 화면을 확인한 뒤 다시 시도해 주세요."
-      : presentError(error).message)
+    await refreshSnapshot()
+    if (error instanceof ApiError) {
+      showToast(error.status === 409 ? "서버 배치와 충돌했습니다. 최신 상태를 불러왔습니다." : error.message)
+      return
+    }
+    showToast(describeError(error))
   }
   const queueSave = (entry: RosterEntry, bounds: Bounds, background: SlotBackground) => {
     setSaveState("saving")
@@ -76,7 +78,8 @@ export function BoardEditorRoute({ actionExtensions }: BoardEditorRouteProps) {
       await mutation()
       await refreshSnapshot()
     } catch (error) {
-      showToast(presentError(error).message)
+      if (error instanceof ApiError) showToast(error.message)
+      else showToast(describeError(error))
     } finally {
       setBusy(false)
     }
@@ -88,8 +91,8 @@ export function BoardEditorRoute({ actionExtensions }: BoardEditorRouteProps) {
       await refreshSnapshot()
       showToast("배경을 교체했습니다.")
     } catch (error) {
-      showToast(presentError(error).message)
-      throw error
+      if (error instanceof ApiError) showToast(error.message)
+      else showToast(describeError(error))
     } finally {
       setBusy(false)
     }
@@ -160,10 +163,7 @@ export function BoardEditorRoute({ actionExtensions }: BoardEditorRouteProps) {
               <h2 id="unplaced-title">미배치 명단</h2>
               <ul className="editor-roster-list">
                 {roster.data.filter((entry) => entry.slot.placementStatus === "UNPLACED").map((entry) => (
-                  <li className="editor-unplaced-entry" key={entry.id}>
-                    <span aria-hidden="true" className="editor-unplaced-drag" draggable onDragStart={(event: DragEvent<HTMLSpanElement>) => event.dataTransfer.setData("text/slot-id", entry.slot.id)}>⠿</span>
-                    <button aria-label={`${entry.identity.name} 배치`} className="board-button" onClick={() => queueSave(entry, defaultPlacement(roster.data.filter((candidate) => candidate.slot.placementStatus === "PLACED").length), "transparent")} tabIndex={0} type="button">{entry.identity.name}</button>
-                  </li>
+                  <li key={entry.id}><button aria-label={`${entry.identity.name} 배치`} className="board-button" draggable onClick={() => queueSave(entry, defaultPlacement(roster.data.filter((candidate) => candidate.slot.placementStatus === "PLACED").length), "transparent")} onDragStart={(event: DragEvent<HTMLButtonElement>) => event.dataTransfer.setData("text/slot-id", entry.slot.id)} type="button">{entry.identity.name}</button></li>
                 ))}
               </ul>
             </section>

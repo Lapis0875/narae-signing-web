@@ -1,7 +1,6 @@
 import { z } from "zod"
-import { apiRequest, parsedApiRequest } from "../../../api/client.ts"
-import { presentError } from "../../../api/errorPresentation.ts"
-import { ApiError } from "../../../api/errors.ts"
+import { apiRequest } from "../../../api/client.ts"
+import { ApiError, describeError } from "../../../api/errors.ts"
 
 export const rosterIdentitySchema = z.strictObject({
   job: z.string().max(200),
@@ -10,7 +9,7 @@ export const rosterIdentitySchema = z.strictObject({
 })
 
 const slotSchema = z.strictObject({
-  backgroundColor: z.string(),
+  backgroundColor: z.string().nullable(),
   height: z.number().nullable(),
   id: z.uuid(),
   placementStatus: z.enum(["UNPLACED", "PLACED"]),
@@ -72,11 +71,15 @@ export class RosterImportRejectedError extends Error {
 export function describeRosterError(error: unknown): string {
   if (error instanceof RosterImportRejectedError) {
     const marker = error.markers.at(0)
-    return marker === undefined
-      ? "명단 형식을 확인해 주세요."
-      : `${marker.row === 0 ? "파일" : `${marker.row}행`}: ${marker.message}`
+    if (marker === undefined) return "명단 형식을 확인해 주세요."
+    const location = marker.row === 0 ? "파일" : `${marker.row}행`
+    return `${location}: ${marker.message}`
   }
-  return presentError(error).message
+  if (error instanceof ApiError) {
+    const detail = rosterErrorCodeSchema.safeParse(error.details.at(0)?.code)
+    if (detail.success) return safeRosterErrorMessage(detail.data)
+  }
+  return describeError(error)
 }
 
 export function rosterQueryKey(boardId: string) {
@@ -84,15 +87,15 @@ export function rosterQueryKey(boardId: string) {
 }
 
 export async function fetchRoster(boardId: string): Promise<readonly RosterEntry[]> {
-  return parsedApiRequest(`/api/v1/admin/boards/${boardId}/roster`, rosterSchema)
+  return rosterSchema.parse(await apiRequest(`/api/v1/admin/boards/${boardId}/roster`))
 }
 
 export async function createRosterEntry(boardId: string, identity: RosterIdentity): Promise<RosterEntry> {
-  return parsedApiRequest(`/api/v1/admin/boards/${boardId}/roster`, rosterEntrySchema, {
+  return rosterEntrySchema.parse(await apiRequest(`/api/v1/admin/boards/${boardId}/roster`, {
     body: JSON.stringify(rosterIdentitySchema.parse(identity)),
     headers: { "Content-Type": "application/json" },
     method: "POST",
-  })
+  }))
 }
 
 export async function updateRosterEntry(
@@ -100,11 +103,11 @@ export async function updateRosterEntry(
   entryId: string,
   identity: RosterIdentity,
 ): Promise<RosterEntry> {
-  return parsedApiRequest(`/api/v1/admin/boards/${boardId}/roster/${entryId}`, rosterEntrySchema, {
+  return rosterEntrySchema.parse(await apiRequest(`/api/v1/admin/boards/${boardId}/roster/${entryId}`, {
     body: JSON.stringify(rosterIdentitySchema.parse(identity)),
     headers: { "Content-Type": "application/json" },
     method: "PATCH",
-  })
+  }))
 }
 
 export async function deleteRosterEntry(boardId: string, entryId: string): Promise<void> {
@@ -116,35 +119,57 @@ export async function replaceRoster(
   rows: readonly RosterIdentity[],
 ): Promise<readonly RosterEntry[]> {
   const body = rosterRowsSchema.parse({ rows })
-  return parsedApiRequest(`/api/v1/admin/boards/${boardId}/roster`, rosterSchema, {
+  return rosterSchema.parse(await apiRequest(`/api/v1/admin/boards/${boardId}/roster`, {
     body: JSON.stringify(body),
     headers: { "Content-Type": "application/json" },
     method: "PUT",
-  })
+  }))
 }
 
 export async function importRosterFile(boardId: string, file: File): Promise<readonly RosterEntry[]> {
   const body = new FormData()
   body.append("file", file)
   try {
-    return await parsedApiRequest(`/api/v1/admin/boards/${boardId}/roster/import`, rosterSchema, {
+    return rosterSchema.parse(await apiRequest(`/api/v1/admin/boards/${boardId}/roster/import`, {
       body,
       method: "POST",
-    })
+    }))
   } catch (error) {
     if (error instanceof ApiError) {
       const rejected = rosterImportErrorSchema.safeParse({ errors: error.details })
       if (rejected.success) {
         const markers = rejected.data.errors
-          .map((detail) => ({
-            message: presentError(new ApiError("ROSTER_INVALID", "", 400, null, [detail])).message,
-            row: detail.row,
-          }))
+          .map((detail) => ({ message: safeRosterErrorMessage(detail.code), row: detail.row }))
           .sort((left, right) => left.row - right.row)
           .slice(0, 50)
         throw new RosterImportRejectedError(markers)
       }
     }
     throw error
+  }
+}
+
+function safeRosterErrorMessage(code: z.infer<typeof rosterErrorCodeSchema>): string {
+  switch (code) {
+    case "BLANK_NAME":
+      return "이름을 입력해 주세요."
+    case "DUPLICATE_IDENTITY":
+      return "같은 명단이 중복되었습니다."
+    case "FIELD_TOO_LONG":
+      return "입력한 값이 너무 깁니다."
+    case "FILE_TOO_LARGE":
+      return "파일 크기를 확인해 주세요."
+    case "INVALID_ENCODING":
+    case "INVALID_FIELDS":
+    case "INVALID_HEADER":
+    case "INVALID_JSON":
+    case "INVALID_MULTIPART":
+    case "INVALID_SHEET_COUNT":
+    case "INVALID_XLSX":
+      return "명단 형식을 확인해 주세요."
+    case "ROW_LIMIT":
+      return "명단은 50명까지 등록할 수 있습니다."
+    case "UNSUPPORTED_FILE_TYPE":
+      return "CSV 또는 XLSX 파일을 선택해 주세요."
   }
 }

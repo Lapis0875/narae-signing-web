@@ -13,8 +13,8 @@ import type { RosterPreview } from "./rosterPreview.ts"
 import {
   deleteRosterEntry,
   createRosterEntry,
-  describeRosterError,
   fetchRoster,
+  describeRosterError,
   importRosterFile,
   replaceRoster,
   RosterImportRejectedError,
@@ -34,7 +34,7 @@ export function RosterEditorRoute() {
   const acceptSnapshot = (entries: readonly RosterEntry[]) => {
     queryClient.setQueryData(rosterQueryKey(boardId), entries)
   }
-  const notifyFailure = (action: string, error: unknown) => showToast(`${action}.\n${describeRosterError(error)}`)
+  const notifyFailure = (action: string, error: unknown) => showToast(`${action}. ${describeRosterError(error)}`)
   const update = useMutation({
     mutationFn: ({ entryId, identity }: { readonly entryId: string; readonly identity: RosterIdentity }) =>
       updateRosterEntry(boardId, entryId, identity),

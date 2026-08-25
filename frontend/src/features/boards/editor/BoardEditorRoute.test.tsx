@@ -27,7 +27,7 @@ const roster = [
   {
     id: "32222222-2222-4222-8222-222222222222",
     identity: { job: "담당", name: "누리", organization: "나래" },
-    slot: { backgroundColor: "transparent", height: null, id: "22222222-2222-4222-8222-222222222222", placementStatus: "UNPLACED", revision: 0, width: null, x: null, y: null },
+    slot: { backgroundColor: null, height: null, id: "22222222-2222-4222-8222-222222222222", placementStatus: "UNPLACED", revision: 0, width: null, x: null, y: null },
     submitted: false,
   },
 ] as const

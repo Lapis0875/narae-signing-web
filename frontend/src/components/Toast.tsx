@@ -15,25 +15,22 @@ class ToastProviderError extends Error {
 
 type ToastProviderProps = {
   readonly children: ReactNode
-  readonly durationMs?: number
 }
 
-export function ToastProvider({ children, durationMs = 5_000 }: ToastProviderProps) {
-  const [toast, setToast] = useState<{ readonly id: number; readonly message: string } | null>(null)
-  const value = useMemo(() => ({
-    showToast: (message: string) => setToast((current) => ({ id: (current?.id ?? 0) + 1, message })),
-  }), [])
+export function ToastProvider({ children }: ToastProviderProps) {
+  const [message, setMessage] = useState("")
+  const value = useMemo(() => ({ showToast: setMessage }), [])
 
   useEffect(() => {
-    if (toast === null) return
-    const timeoutId = window.setTimeout(() => setToast(null), durationMs)
+    if (message === "") return
+    const timeoutId = window.setTimeout(() => setMessage(""), 5_000)
     return () => window.clearTimeout(timeoutId)
-  }, [durationMs, toast])
+  }, [message])
 
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <output aria-live="polite" className="app-toast">{toast?.message ?? ""}</output>
+      <output aria-live="polite" className="app-toast">{message}</output>
     </ToastContext.Provider>
   )
 }

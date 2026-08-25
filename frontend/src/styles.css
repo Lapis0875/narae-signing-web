@@ -72,11 +72,6 @@ p {
   margin-block: var(--space-0) var(--space-16);
 }
 
-dialog p {
-  overflow-wrap: anywhere;
-  word-break: keep-all;
-}
-
 h1 {
   font-size: var(--font-size-heading);
   font-weight: var(--font-weight-bold);
@@ -196,9 +191,8 @@ a:focus-visible {
   box-shadow: var(--shadow-card);
   font-size: var(--font-size-label);
   line-height: var(--line-height-body);
-  overflow-wrap: anywhere;
-  white-space: pre-line;
   word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 
 .app-toast:empty {
@@ -224,8 +218,8 @@ a:focus-visible {
   }
 
   .app-toast {
-    inset-inline-end: var(--space-16);
-    inset-block-end: var(--space-16);
+    inset-inline-end: max(var(--space-16), env(safe-area-inset-right));
+    inset-block-end: max(var(--space-16), env(safe-area-inset-bottom));
     max-inline-size: calc(100vw - var(--space-32));
   }
 }
