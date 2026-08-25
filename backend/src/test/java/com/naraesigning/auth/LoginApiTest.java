@@ -122,6 +122,9 @@ class LoginApiTest {
                     .andExpect(header().string("Cache-Control", "no-store, private"))
                     .andExpect(jsonPath("$.authenticated").value(true))
                     .andExpect(jsonPath("$.expiresAt").value("2026-08-20T12:00:00Z"));
+            mvc.perform(get("/api/v1/admin/boards").secure(true).cookie(adminSession))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$").isEmpty());
             mvc.perform(post("/api/v1/auth/logout")
                             .secure(true)
                             .header("X-XSRF-TOKEN", rotatedCsrf.getValue())

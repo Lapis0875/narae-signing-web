@@ -6,6 +6,7 @@ import { RosterTable } from "../roster/RosterTable.tsx"
 import {
   createRosterEntry,
   deleteRosterEntry,
+  describeRosterError,
   importRosterFile,
   replaceRoster,
   RosterImportRejectedError,
@@ -25,24 +26,30 @@ export function RosterManagementPanel({ boardId, entries }: RosterManagementPane
   const queryClient = useQueryClient()
   const { showToast } = useToast()
   const refresh = async () => queryClient.invalidateQueries({ queryKey: rosterQueryKey(boardId) })
+  const notifyFailure = (action: string, error: unknown) => showToast(`${action}. ${describeRosterError(error)}`)
   const addition = useMutation({
     mutationFn: (identity: RosterIdentity) => createRosterEntry(boardId, identity),
+    onError: (error) => notifyFailure("명단을 추가하지 못했습니다", error),
     onSuccess: async () => { await refresh(); showToast("명단을 추가했습니다.") },
   })
   const update = useMutation({
     mutationFn: ({ entryId, identity }: { readonly entryId: string; readonly identity: RosterIdentity }) => updateRosterEntry(boardId, entryId, identity),
+    onError: (error) => notifyFailure("명단을 수정하지 못했습니다", error),
     onSuccess: async () => { await refresh(); showToast("명단을 수정했습니다.") },
   })
   const removal = useMutation({
     mutationFn: (entryId: string) => deleteRosterEntry(boardId, entryId),
+    onError: (error) => notifyFailure("명단을 삭제하지 못했습니다", error),
     onSuccess: async () => { await refresh(); showToast("명단을 삭제했습니다.") },
   })
   const replacement = useMutation({
     mutationFn: (rows: readonly RosterIdentity[]) => replaceRoster(boardId, rows),
+    onError: (error) => notifyFailure("서버 명단으로 갱신하지 못했습니다", error),
     onSuccess: (snapshot) => { queryClient.setQueryData(rosterQueryKey(boardId), snapshot); showToast("서버 명단으로 갱신했습니다.") },
   })
   const fileImport = useMutation({
     mutationFn: ({ file }: { readonly file: File; readonly preview: RosterPreview }) => importRosterFile(boardId, file),
+    onError: (error) => notifyFailure("파일 명단을 가져오지 못했습니다", error),
     onSuccess: (snapshot) => { queryClient.setQueryData(rosterQueryKey(boardId), snapshot); showToast("파일 명단을 가져왔습니다.") },
   })
   const isSaving = addition.isPending || update.isPending || removal.isPending || replacement.isPending || fileImport.isPending

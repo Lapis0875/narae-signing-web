@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { apiRequest } from "../../../api/client.ts"
-import { ApiError } from "../../../api/errors.ts"
+import { ApiError, describeError } from "../../../api/errors.ts"
 
 export const rosterIdentitySchema = z.strictObject({
   job: z.string().max(200),
@@ -9,7 +9,7 @@ export const rosterIdentitySchema = z.strictObject({
 })
 
 const slotSchema = z.strictObject({
-  backgroundColor: z.string(),
+  backgroundColor: z.string().nullable(),
   height: z.number().nullable(),
   id: z.uuid(),
   placementStatus: z.enum(["UNPLACED", "PLACED"]),
@@ -66,6 +66,20 @@ export class RosterImportRejectedError extends Error {
     this.name = "RosterImportRejectedError"
     this.markers = markers
   }
+}
+
+export function describeRosterError(error: unknown): string {
+  if (error instanceof RosterImportRejectedError) {
+    const marker = error.markers.at(0)
+    if (marker === undefined) return "명단 형식을 확인해 주세요."
+    const location = marker.row === 0 ? "파일" : `${marker.row}행`
+    return `${location}: ${marker.message}`
+  }
+  if (error instanceof ApiError) {
+    const detail = rosterErrorCodeSchema.safeParse(error.details.at(0)?.code)
+    if (detail.success) return safeRosterErrorMessage(detail.data)
+  }
+  return describeError(error)
 }
 
 export function rosterQueryKey(boardId: string) {

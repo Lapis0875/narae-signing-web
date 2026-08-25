@@ -16,9 +16,10 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.session.web.http.SessionRepositoryFilter;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-@Order(Ordered.HIGHEST_PRECEDENCE + 1)
+@Order(SessionRepositoryFilter.DEFAULT_ORDER + 1)
 final class AdminBoardFilter extends OncePerRequestFilter {
     static final String OWNER_ATTRIBUTE = AdminBoardFilter.class.getName() + ".owner";
     private static final Pattern BOARD_PATH = Pattern.compile(

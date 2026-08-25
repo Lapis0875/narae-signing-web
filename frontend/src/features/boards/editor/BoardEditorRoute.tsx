@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useCallback, useRef, useState, type DragEvent, type ReactNode } from "react"
+import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react"
 import { Link, useParams } from "react-router-dom"
-import { ApiError } from "../../../api/errors.ts"
+import { ApiError, describeError } from "../../../api/errors.ts"
 import { AppShell } from "../../../components/AppShell.tsx"
 import { ForbiddenView, LoadingView } from "../../../components/AsyncViews.tsx"
 import { useToast } from "../../../components/Toast.tsx"
@@ -46,6 +46,11 @@ export function BoardEditorRoute({ actionExtensions }: BoardEditorRouteProps) {
   const roster = useQuery({ queryFn: () => fetchRoster(boardId), queryKey: rosterQueryKey(boardId) })
   const share = useQuery({ queryFn: () => fetchShare(boardId), queryKey: ["admin", "boards", boardId, "share"] })
   const backgroundUrl = useObjectUrl(background.data)
+  const initialLoadError = board.error ?? roster.error
+
+  useEffect(() => {
+    if (initialLoadError !== null) showToast(`편집 화면을 불러오지 못했습니다. ${describeError(initialLoadError)}`)
+  }, [initialLoadError, showToast])
 
   const refreshSnapshot = useCallback(async () => {
     await Promise.all([background.refetch(), board.refetch(), roster.refetch()])
@@ -57,7 +62,7 @@ export function BoardEditorRoute({ actionExtensions }: BoardEditorRouteProps) {
       showToast(error.status === 409 ? "서버 배치와 충돌했습니다. 최신 상태를 불러왔습니다." : error.message)
       return
     }
-    throw error
+    showToast(describeError(error))
   }
   const queueSave = (entry: RosterEntry, bounds: Bounds, background: SlotBackground) => {
     setSaveState("saving")
@@ -74,7 +79,7 @@ export function BoardEditorRoute({ actionExtensions }: BoardEditorRouteProps) {
       await refreshSnapshot()
     } catch (error) {
       if (error instanceof ApiError) showToast(error.message)
-      else throw error
+      else showToast(describeError(error))
     } finally {
       setBusy(false)
     }
@@ -87,7 +92,7 @@ export function BoardEditorRoute({ actionExtensions }: BoardEditorRouteProps) {
       showToast("배경을 교체했습니다.")
     } catch (error) {
       if (error instanceof ApiError) showToast(error.message)
-      throw error
+      else showToast(describeError(error))
     } finally {
       setBusy(false)
     }
@@ -103,8 +108,7 @@ export function BoardEditorRoute({ actionExtensions }: BoardEditorRouteProps) {
   })
 
   if (board.isPending || roster.isPending || share.isPending) return <LoadingView />
-  const error = board.error ?? roster.error
-  if (error instanceof ApiError && error.status === 403) return <ForbiddenView />
+  if (initialLoadError instanceof ApiError && initialLoadError.status === 403) return <ForbiddenView />
   if (board.data === undefined || roster.data === undefined) {
     return <AppShell><section className="app-panel"><p role="alert">편집 화면을 불러오지 못했습니다.</p></section></AppShell>
   }
