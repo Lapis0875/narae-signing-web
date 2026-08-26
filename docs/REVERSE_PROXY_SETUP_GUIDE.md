@@ -1,301 +1,258 @@
-# signing.lapis0875.com 리버스 프록시 설정 가이드
+# Proxmox VE Nginx Proxy Manager에서 NaraeSign 연결하기
 
-## 1. 목적과 적용 범위
+이 문서는 기존 **Nginx Proxy Manager(NPM) LXC**가 여러 LXC/VM을 이미 프록시하는 Proxmox VE 환경에서, NaraeSign을 별도 애플리케이션 LXC로 연결하는 WebUI 절차다. NPM에서 TLS를 종료하고, NaraeSign LXC에는 frontend 포트만 내부 HTTP로 연결한다.
 
-이 문서는 ProxmoxVE 환경에서 Nginx Proxy Manager(NPM) LXC가 애플리케이션 LXC의 온라인 서명 보드 MVP를 공개 HTTPS 주소로 제공하도록 설정하는 절차다.
+이 절차는 직접 DNS와 pfSense NAT를 쓰는 구성을 전제로 한다. Cloudflare, 다른 L7 프록시, VPN 터널을 NPM 앞에 추가한 경우에는 클라이언트 IP 신뢰 경계를 별도로 설계해야 한다.
 
-- 공개 주소: https://signing.lapis0875.com
-- 외부 공개 대상: frontend Nginx 하나
-- 내부 대상: Spring Boot API와 SSE, PostgreSQL, MinIO
-- 직접 공개 금지: PostgreSQL, MinIO API, MinIO Console, Spring Boot 포트
-- 기준 구현: docs/plan/IMPLEMENTATION_PLAN.md
+## 1. 먼저 정할 값
 
-이 문서는 현재 선택한 직접 DNS·NAT 방식만 다룬다. Cloudflare 프록시, Tailscale Funnel, 외부 로드밸런서는 별도 설계가 필요하다.
+아래 값은 예시다. 실제 네트워크 값으로 바꾸며, Docker 내부 주소인 `172.30.0.x`는 NPM에 넣지 않는다.
 
-## 2. 목표 네트워크
-
-~~~text
-Internet
-  │
-  ├─ DNS A: signing.lapis0875.com → 공인 IPv4
-  │
-Router / NAT
-  ├─ WAN TCP 80  → NPM_LXC_IP:80
-  └─ WAN TCP 443 → NPM_LXC_IP:443
-
-Nginx Proxy Manager LXC
-  └─ Proxy Host signing.lapis0875.com
-       └─ HTTP → APP_LXC_IP:8080
-
-애플리케이션 LXC
-  └─ frontend Nginx :8080
-       ├─ /       → React 정적 파일
-       ├─ /api/   → Spring Boot backend:8080
-       └─ /health → Spring Boot health
-
-Docker Compose 내부망
-  ├─ backend
-  ├─ postgres
-  └─ minio
-~~~
-
-아래 값은 실제 값으로 바꾼다.
-
-| 자리표시자 | 의미 |
-| --- | --- |
-| APP_LXC_IP | 애플리케이션 LXC의 내부 IPv4 주소 |
-| NPM_LXC_IP | Nginx Proxy Manager LXC의 내부 IPv4 주소 |
-| PUBLIC_IPV4 | 라우터의 인터넷 측 공인 IPv4 주소 |
-
-## 3. 사전 조건
-
-1. 애플리케이션 LXC에 Portainer Stack이 배포되어 있고, frontend 컨테이너가 APP_LXC_IP의 TCP 8080에서 응답한다.
-2. NPM LXC와 애플리케이션 LXC는 서로 통신 가능한 내부망에 있다.
-3. 라우터 또는 상위 방화벽에서 80과 443을 NPM LXC로 전달할 수 있다.
-4. signing.lapis0875.com DNS를 수정할 권한이 있다.
-5. NPM 관리 UI 자체는 강한 관리자 비밀번호와 별도 보호를 사용한다. 서명 보드용 Proxy Host에는 NPM Access List를 걸지 않는다. 공개 서명자가 접근해야 하기 때문이다.
-
-NPM LXC에서 먼저 애플리케이션 연결을 확인한다.
-
-~~~sh
-curl -fsS http://APP_LXC_IP:8080/health
-~~~
-
-기대 결과는 HTTP 200과 비밀 정보가 없는 서비스 상태 응답이다. 이 단계가 실패하면 DNS나 인증서를 설정하기 전에 LXC 방화벽, frontend 컨테이너, 포트 바인딩을 해결한다.
-
-## 4. 애플리케이션 LXC와 Compose 노출 규칙
-
-### 4.1 frontend만 포트 공개
-
-frontend Nginx 서비스만 애플리케이션 LXC의 8080으로 포트를 publish한다.
-
-~~~text
-APP_LXC_IP:8080 → frontend:80
-~~~
-
-다음 포트는 host에 publish하지 않는다.
-
-~~~text
-PostgreSQL 5432
-MinIO API 9000
-MinIO Console 9001
-Spring Boot backend 8080
-~~~
-
-애플리케이션 LXC 방화벽은 TCP 8080의 원본을 NPM_LXC_IP로 제한한다. NPM과 앱이 같은 신뢰 가능한 내부망에 있어도, 인터넷·다른 VLAN에서 8080을 직접 열지 않는다.
-
-### 4.2 frontend Nginx 구성
-
-frontend 컨테이너의 Nginx는 React SPA를 제공하고 API와 SSE를 backend 서비스로 전달한다. 다음은 필요한 동작의 기준 예시다.
-
-~~~nginx
-server {
-    listen 80;
-    server_name _;
-
-    root /usr/share/nginx/html;
-    index index.html;
-
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
-    location /api/ {
-        proxy_pass http://backend:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP "";
-        proxy_set_header X-Forwarded-For "";
-        proxy_set_header X-Forwarded-Host $host;
-        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
-        proxy_set_header X-Narae-Client-IP $http_x_narae_client_ip;
-        proxy_request_buffering on;
-    }
-
-    location ~ ^/api/v1/admin/boards/[^/]+/events$ {
-        proxy_pass http://backend:8080;
-        proxy_http_version 1.1;
-        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
-        proxy_set_header X-Narae-Client-IP $http_x_narae_client_ip;
-        proxy_buffering off;
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-        add_header X-Accel-Buffering no always;
-    }
-
-    location = /health {
-        proxy_pass http://backend:8080/health;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
-    }
-}
-~~~
-
-중요 사항:
-
-- NPM에서 frontend까지는 내부 HTTP일 수 있으므로, frontend가 X-Forwarded-Proto를 $scheme 값인 http로 덮어쓰면 안 된다. NPM이 전달한 https 값을 backend까지 보존한다.
-- SSE는 WebSocket이 아니다. SSE 응답만 `proxy_buffering off`와 3600초 timeout을 사용한다. 로그인·서명·업로드 같은 mutation 요청은 `proxy_request_buffering on`을 유지한다.
-- backend의 `server.forward-headers-strategy=none`은 의도된 값이다. backend는 `172.30.0.10` frontend만 신뢰하고 `TrustedProxyFilter`가 단일 `X-Narae-Client-IP`와 `X-Forwarded-Proto`를 검증한다. NPM은 외부 입력값을 전달하지 않고 아래 값으로 덮어써야 한다.
-
-## 5. DNS와 라우터 설정
-
-### 5.1 DNS
-
-DNS 제공자에서 다음 A 레코드를 만든다.
-
-| 이름 | 유형 | 값 |
+| 항목 | 예시 | 의미 |
 | --- | --- | --- |
-| signing.lapis0875.com | A | PUBLIC_IPV4 |
+| `PUBLIC_DOMAIN` | `signing.example.com` | 사용자가 브라우저에서 여는 공개 도메인 |
+| `NPM_LXC_IP` | `192.168.10.10` | 기존 NPM LXC의 고정 LAN IP |
+| `APP_LXC_IP` | `192.168.10.42` | NaraeSign LXC의 고정 LAN IP |
+| `FRONTEND_PORT` | `8080` | NaraeSign Compose가 LXC에 공개하는 frontend 포트 |
+| `PUBLIC_IPV4` | `<pfSense WAN 공인 IP>` | DNS A 레코드가 가리킬 공인 주소 |
 
-- IPv6 외부 연결을 실제로 설정·검증한 경우에만 AAAA 레코드를 추가한다.
-- 공인 IP가 바뀌는 회선이면 DNS 제공자의 API 또는 DDNS로 A 레코드를 갱신해야 한다. 갱신하지 않으면 인증서 갱신과 행사 접속이 실패한다.
-- DNS 전파 뒤 외부 네트워크에서 다음을 확인한다.
+NaraeSign의 `infra/compose/.env`에는 반드시 다음처럼 공개 도메인과 frontend 포트를 맞춘다.
 
-~~~sh
-dig +short signing.lapis0875.com A
-~~~
+```dotenv
+APP_PUBLIC_ORIGIN=https://signing.example.com
+FRONTEND_PORT=8080
+```
 
-### 5.2 NAT와 방화벽
+`APP_PUBLIC_ORIGIN`은 NPM 내부 주소나 `http://APP_LXC_IP:8080`이 아니라, 브라우저가 실제로 사용하는 정확한 HTTPS origin이다. 끝에 경로나 포트를 붙이지 않는다.
 
-라우터에서 다음 TCP 포트 전달을 만든다.
+## 2. 연결 구조와 포트
 
-| WAN 포트 | 대상 | 대상 포트 | 용도 |
-| --- | --- | --- | --- |
-| 80 | NPM_LXC_IP | 80 | Let’s Encrypt HTTP 검증과 HTTP→HTTPS 리다이렉트 |
-| 443 | NPM_LXC_IP | 443 | 실제 HTTPS 서비스 |
+```text
+Internet browser
+  └─ HTTPS :443 / HTTP :80
+       └─ pfSense WAN NAT
+            └─ NPM LXC (NPM_LXC_IP)
+                 └─ HTTP :8080
+                      └─ NaraeSign LXC (APP_LXC_IP)
+                           └─ frontend container :80
+                                └─ private Docker network
+                                     ├─ backend :8080
+                                     ├─ PostgreSQL :5432
+                                     └─ MinIO :9000
+```
 
-- APP_LXC_IP:8080, PostgreSQL, MinIO 포트로 직접 전달하는 규칙은 만들지 않는다.
-- ISP가 80/443 인바운드를 막거나 CGNAT를 쓰면 이 방식은 동작하지 않는다. 먼저 공인 IP·포트 개방 가능 여부를 확인하고, 불가능하면 별도 공개 경로를 결정한다.
+| 구간 | 프로토콜·포트 | 설정 원칙 |
+| --- | --- | --- |
+| 인터넷 → NPM | TCP `80`, `443` | pfSense는 이 두 포트만 NPM LXC로 전달한다. |
+| NPM → NaraeSign | `http://APP_LXC_IP:FRONTEND_PORT` | NPM Proxy Host의 upstream이다. 내부 HTTP가 정상이며, 여기서 HTTPS를 다시 만들지 않는다. |
+| NaraeSign LXC → Docker frontend | `FRONTEND_PORT:80` | Compose가 frontend만 publish한다. 기본값은 `8080:80`이다. |
+| Docker 내부 | HTTP와 private network | backend, PostgreSQL, MinIO는 NPM·WAN에 직접 공개하지 않는다. |
+| NPM 관리 화면 | 설치별 관리 포트, 흔히 `81` | 관리 LAN 또는 VPN에서만 접근한다. WAN NAT를 추가하지 않는다. |
 
-## 6. Nginx Proxy Manager Proxy Host 생성
+NPM의 Forward Hostname/IP에는 `APP_LXC_IP`를 쓴다. Compose의 frontend 내부 IP `172.30.0.10`은 NPM LXC에서 도달할 수 없는 Docker 내부 주소다.
 
-NPM 관리 화면에서 Hosts → Proxy Hosts → Add Proxy Host를 연다.
+## 3. NPM을 열기 전 확인
 
-### 6.1 Details 탭
+### 3.1 NaraeSign LXC에서 Compose 상태 확인
 
-| 항목 | 값 |
+NaraeSign LXC에서 frontend가 정상인지 먼저 확인한다.
+
+```sh
+cd /opt/narae-signing
+docker compose --env-file infra/compose/.env -f infra/compose/compose.yml ps
+curl -fsS http://127.0.0.1:8080/health
+```
+
+`frontend`, `backend`, `postgres`, `minio`는 `healthy`여야 하고, health 응답은 `{"status":"UP"}`이어야 한다.
+
+### 3.2 NPM LXC에서 upstream 연결 확인
+
+NPM LXC 쉘에서 NPM을 거치지 않은 내부 연결을 확인한다.
+
+```sh
+curl -fsS http://APP_LXC_IP:FRONTEND_PORT/health
+```
+
+이 명령이 실패하면 NPM WebUI를 설정하지 않는다. NaraeSign LXC IP, `FRONTEND_PORT`, Compose health, Proxmox 방화벽을 먼저 고친다.
+
+### 3.3 Proxmox·pfSense 방화벽
+
+NaraeSign LXC의 Proxmox WebUI에서 다음을 확인한다.
+
+1. **CT → Options → Firewall**을 켠다.
+2. **CT → Firewall → Add**에서 inbound 허용 규칙을 만든다.
+
+| 방향 | Action | Protocol | Source | Destination port | 설명 |
+| --- | --- | --- | --- | --- | --- |
+| IN | ACCEPT | TCP | `NPM_LXC_IP/32` | `FRONTEND_PORT` | NPM만 frontend로 연결 |
+
+기본 inbound 정책이 `DROP`이 아니라면, 위 허용 규칙 뒤에 다른 원본의 `FRONTEND_PORT`를 막는 규칙을 추가한다. SSH 관리 규칙은 별도로 유지한다.
+
+pfSense WebUI에서는 **Firewall → NAT → Port Forward**에서 이미 NPM으로 향하는 아래 두 규칙만 있으면 된다. NaraeSign LXC를 향한 별도 WAN NAT 규칙은 만들지 않는다.
+
+| Interface | Protocol | Destination port | Redirect target | Redirect port |
+| --- | --- | --- | --- | --- |
+| WAN | TCP | `80` | `NPM_LXC_IP` | `80` |
+| WAN | TCP | `443` | `NPM_LXC_IP` | `443` |
+
+각 NAT 규칙에 연결된 WAN firewall rule도 존재해야 한다. PostgreSQL `5432`, MinIO `9000`/`9001`, backend 포트, `FRONTEND_PORT`를 WAN에서 직접 여는 규칙은 만들지 않는다.
+
+## 4. DNS 준비
+
+DNS 제공자에서 `PUBLIC_DOMAIN`의 A 레코드를 `PUBLIC_IPV4`로 만든다.
+
+```text
+signing.example.com.  A  <PUBLIC_IPV4>
+```
+
+IPv6를 실제로 NPM까지 구성하고 검증한 경우에만 AAAA 레코드를 추가한다. Let’s Encrypt HTTP-01 발급을 쓸 경우, 외부 인터넷에서 WAN `80`이 NPM `80`으로 도달해야 한다.
+
+## 5. NPM WebUI: Proxy Host 만들기
+
+NPM 관리 화면에서 **Hosts → Proxy Hosts → Add Proxy Host**를 연다.
+
+### 5.1 Details 탭
+
+| 화면 항목 | 입력값 | 이유 |
+| --- | --- | --- |
+| Domain Names | `PUBLIC_DOMAIN` | 예: `signing.example.com`. `https://`·경로·포트는 넣지 않는다. |
+| Scheme | `http` | NPM과 NaraeSign frontend 사이의 내부 구간은 HTTP다. |
+| Forward Hostname / IP | `APP_LXC_IP` | 예: `192.168.10.42` |
+| Forward Port | `FRONTEND_PORT` | 기본값 `8080` |
+| Cache Assets | Off | 로그인·API·공유 링크가 섞인 앱에 NPM cache를 추가하지 않는다. |
+| Block Common Exploits | On | NPM 기본 보호를 유지한다. |
+| Websockets Support | On | SSE에 WebSocket은 필수는 아니지만 HTTP/1.1 upstream 호환을 유지한다. |
+| Access List | Publicly Accessible | 공개 서명 URL이 있으므로 NPM Access List로 전체 도메인을 잠그지 않는다. 관리자 보호는 앱 로그인으로 처리한다. |
+
+저장 전 다음 탭도 모두 설정한다.
+
+### 5.2 Custom Locations 탭: 필수 클라이언트 IP 헤더
+
+**Custom Locations → Add Location**을 열고 root location 하나를 추가한다.
+
+| 화면 항목 | 입력값 |
 | --- | --- |
-| Domain Names | signing.lapis0875.com |
-| Scheme | http |
-| Forward Hostname / IP | APP_LXC_IP |
-| Forward Port | 8080 |
-| Cache Assets | Off |
-| Block Common Exploits | On |
-| Websockets Support | On |
+| Location | `/` |
+| Scheme | `http` |
+| Forward Hostname / IP | `APP_LXC_IP` |
+| Forward Port | `FRONTEND_PORT` |
+| Forward Path | 비워 둠 |
 
-Websockets Support는 SSE에 필수는 아니지만, 이 Proxy Host에서 켜도 문제없다. SSE 동작은 아래 Advanced 설정의 버퍼링·시간 제한이 결정한다.
+이 Custom Location의 **Advanced** 입력란에는 아래 한 줄만 넣는다.
 
-### 6.2 SSL 탭
-
-1. Request a new SSL Certificate를 선택한다.
-2. Let’s Encrypt 약관에 동의하고 인증서 만료 알림용 이메일을 NPM에 입력한다.
-3. Force SSL을 켠다.
-4. HTTP/2 Support를 켠다.
-5. HSTS는 첫 HTTPS 접속과 서명 흐름을 검증한 뒤 켠다. HSTS를 켠 뒤 잘못된 HTTPS 설정을 되돌리기 어렵기 때문이다.
-6. 저장한다.
-
-NPM이 인증서를 발급하지 못하면 DNS가 아직 다른 주소를 가리키거나 WAN 80이 NPM까지 전달되지 않는 경우가 가장 많다.
-
-### 6.3 Advanced 탭
-
-NPM이 생성한 Proxy Host server 블록에 다음 지시어를 추가한다. `X-Narae-Client-IP`는 브라우저가 보낸 값을 전달하지 않고 NPM이 관측한 peer 주소로 덮어쓴다. NPM LXC 앞에 별도 CDN/프록시를 두지 않는 현재 직접 NAT 구성에서만 이 주소를 사용한다.
-
-~~~nginx
+```nginx
 proxy_set_header X-Narae-Client-IP $remote_addr;
-proxy_set_header X-Forwarded-Proto https;
-proxy_set_header X-Forwarded-Host $host;
-proxy_set_header X-Forwarded-For "";
-proxy_set_header X-Real-IP "";
+```
+
+이 헤더는 NPM이 관측한 접속 IP를 frontend를 거쳐 backend로 전달한다. 관리자 로그인은 이 헤더가 없거나 IP 형식이 아니면 거부되므로 생략하면 안 된다.
+
+중요한 점:
+
+- Proxy Host의 상단 Advanced 탭에 `proxy_set_header X-Narae-Client-IP ...`만 넣어서는 충분하지 않다. NPM의 기본 root location이 location 수준에서 proxy header를 다시 선언해 상단 설정을 상속하지 않는다. NPM의 [Proxy Host 템플릿](https://github.com/NginxProxyManager/nginx-proxy-manager/blob/develop/backend/templates/proxy_host.conf)과 [Custom Location 템플릿](https://github.com/NginxProxyManager/nginx-proxy-manager/blob/develop/backend/templates/_location.conf)의 배치가 그 이유다.
+- raw `location / { ... }` 블록을 Proxy Host Advanced 탭에 직접 붙여 넣지 않는다. NPM이 생성하는 root location과 충돌할 수 있다.
+- `X-Forwarded-Proto`는 Custom Location Advanced에 직접 덮어쓰지 않는다. NPM은 TLS로 받은 요청의 scheme을 `https`로 자동 전달한다. NaraeSign frontend는 그 값을 backend까지 보존한다.
+- 이 안내는 NPM이 직접 TLS를 종료하는 구조에만 맞는다. NPM 앞에 Cloudflare·또 다른 reverse proxy를 두면 `$remote_addr`가 실제 브라우저 IP가 아닐 수 있으므로, 그 프록시의 trusted IP 범위를 별도 설계하고 검증한다.
+
+### 5.3 Proxy Host Advanced 탭: 업로드·SSE 설정
+
+Proxy Host의 **Advanced** 탭에는 아래 설정을 추가한다.
+
+```nginx
+# NaraeSign 배경 이미지 업로드의 전체 HTTP request 상한: 52,500,000 bytes
+client_max_body_size 52500000;
+
+# 일반 API mutation은 완전한 request body를 받아 upstream으로 전달한다.
 proxy_buffering on;
 proxy_request_buffering on;
+
+# SSE 연결을 최대 1시간 유지한다.
 proxy_read_timeout 3600s;
 proxy_send_timeout 3600s;
-~~~
+```
 
-frontend의 SSE 응답은 `X-Accel-Buffering: no`를 반환하므로 NPM은 그 응답만 버퍼링하지 않는다. 일반 응답 버퍼링과 mutation 요청 버퍼링은 계속 켜 둔다. Websockets Support는 Upgrade 헤더 호환을 제공하지만 SSE의 성공 조건은 `text/event-stream`, `X-Accel-Buffering: no`, 응답 지연 없음, 3600초 timeout이다.
+`client_max_body_size`는 NPM 바깥쪽 제한이다. frontend와 backend는 경로별로 더 작은 상한을 다시 적용하므로, NPM에서 `0`, `100m`, `2000m` 같은 더 큰 값으로 풀지 않는다.
 
-## 7. 배포 전 보안 점검
+| 기능 | 최대 전체 요청 크기 | 실제 경로 |
+| --- | ---: | --- |
+| 배경 이미지 업로드 | `52,500,000` bytes | `POST /api/v1/admin/boards/{id}/background` |
+| 명단 CSV/XLSX import | `1065000` bytes | `POST /api/v1/admin/boards/{id}/roster/import` |
+| 명단 JSON·서명 payload | `1048576` bytes | 명단 수정·서명 제출 경로 |
+| 로그인·공개 식별 | `16384` bytes | 로그인·식별 경로 |
+| 기타 API mutation | `65536` bytes | 그 외 비-GET API |
 
-- frontend Nginx만 APP_LXC_IP:8080으로 노출되어 있는지 확인한다.
-- 5432, 9000, 9001, backend 내부 포트가 WAN·다른 내부망에서 열리지 않았는지 확인한다.
-- NPM은 signing.lapis0875.com 하나만 앱 LXC로 보낸다. MinIO Console용 별도 Proxy Host는 만들지 않는다.
-- NPM과 Portainer의 관리 UI는 공개 서명 도메인과 분리한다.
-- 앱의 master key, PostgreSQL·MinIO 비밀번호, GHCR 토큰, Portainer webhook은 NPM 설정의 Advanced 탭이나 Git 저장소에 넣지 않는다.
-- NPM이 외부 `X-Narae-Client-IP`, `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Proto`를 그대로 신뢰하지 않고 위 값으로 덮어쓰는지 확인한다. backend는 frontend `172.30.0.10`에서 온 전달 헤더만 신뢰한다.
-- HTTPS 로그인 응답의 `ADMIN_SESSION`과 공개 식별 응답의 `SIGNER_SESSION`은 `Secure; HttpOnly; SameSite=Lax`여야 한다. `XSRF-TOKEN`은 `Secure; SameSite=Lax`여야 하며 JavaScript가 CSRF 헤더로 읽어야 하므로 HttpOnly가 아니다.
+배경 이미지의 상한은 약 50 MB이며 multipart 경계도 전체 요청 크기에 포함된다. 따라서 파일 자체는 이 값보다 약간 작아야 한다. NPM과 frontend가 request body를 버퍼링하므로, NPM LXC의 Docker/임시 저장소에 동시 업로드 수보다 충분한 디스크 여유를 남긴다.
 
-## 8. 외부 검증 절차
+SSE는 WebSocket이 아니다. frontend가 SSE 응답에 `X-Accel-Buffering: no`를 넣어 NPM에서 해당 응답만 버퍼링하지 않게 한다. 위의 일반 `proxy_buffering on`과 `proxy_request_buffering on`은 이미지 업로드·로그인·서명 제출에 유지해야 한다.
 
-### 8.1 HTTP와 TLS
+### 5.4 SSL 탭
 
-외부 네트워크에서 실행한다.
+1. **SSL Certificate**에서 **Request a new SSL Certificate**를 선택한다.
+2. Let’s Encrypt 이메일과 약관 동의를 입력한다.
+3. **Force SSL**을 켠다.
+4. **HTTP/2 Support**를 켠다.
+5. 처음 배포할 때는 **HSTS**와 **HSTS Subdomains**를 끈다.
+6. 저장한 뒤 로그인·서명·SSE가 모두 정상인 것을 확인한 경우에만 HSTS를 켠다.
 
-~~~sh
-curl -I http://signing.lapis0875.com
-curl -I https://signing.lapis0875.com
-curl -fsS https://signing.lapis0875.com/health
-~~~
+HTTP-01 발급이 실패하면 Proxy Host 값을 바꾸기 전에 DNS A 레코드, WAN `80` NAT, NPM LXC의 `80` 수신, CGNAT 여부를 점검한다. WAN `80`을 열 수 없는 환경은 DNS challenge를 별도로 설계해야 한다.
+
+## 6. 저장 뒤 확인할 NPM 화면 상태
+
+**Hosts → Proxy Hosts** 목록에서 해당 host가 Online인지 확인한다. 오류가 나면 다음 순서로 확인한다.
+
+1. NPM LXC에서 `curl http://APP_LXC_IP:FRONTEND_PORT/health`가 먼저 성공하는지 확인한다.
+2. Proxy Host의 upstream이 `https`, Docker 내부 IP, backend 포트를 가리키지 않는지 확인한다.
+3. Custom Location `/`이 있고 `X-Narae-Client-IP` 헤더 한 줄이 있는지 확인한다.
+4. Proxy Host Advanced 설정에 `client_max_body_size 52500000;`와 3600초 timeout이 있는지 확인한다.
+5. NPM 로그와 브라우저 Network 응답을 확인하되, 쿠키·공유 토큰·실제 개인정보는 로그나 스크린샷에 남기지 않는다.
+
+## 7. 외부 검증
+
+LAN 내부 주소가 아닌 외부 네트워크에서 다음을 실행한다.
+
+```sh
+curl -I http://<PUBLIC_DOMAIN>/health
+curl -fsS https://<PUBLIC_DOMAIN>/health
+```
 
 기대 결과:
 
-- 첫 요청은 HTTP `301`이고 path/query를 보존한 정확한 `Location: https://signing.lapis0875.com/...`를 반환한다. 다른 host, scheme, port로 이동하면 실패다.
-- 두 번째 요청은 유효한 Let’s Encrypt 인증서와 HTTP 200을 받는다.
-- health 응답에는 상태만 있고 DB 주소·키·컨테이너 세부 정보가 없다.
+- HTTP 요청은 같은 host·path·query를 보존한 HTTPS 리다이렉트다.
+- HTTPS health는 HTTP 200과 `{"status":"UP"}`을 반환한다.
+- 브라우저는 `https://PUBLIC_DOMAIN`에서 관리자 로그인에 성공한다.
 
-리다이렉트와 전달 헤더를 실제 path/query로 검증한다.
+그 다음 실제 브라우저에서 다음을 검증한다.
 
-~~~sh
-curl -sS -D - -o /dev/null 'http://signing.lapis0875.com/health?probe=redirect'
-curl -sS -D - -o /dev/null \
-  -H 'X-Narae-Client-IP: 203.0.113.200' \
-  -H 'X-Forwarded-Proto: http' \
-  'https://signing.lapis0875.com/health'
-~~~
+1. 관리자 로그인 후 새로고침해도 세션이 유지된다.
+2. 보드 배경 이미지 업로드가 성공하며, 한도를 넘은 파일은 `413 request_too_large`로 거부된다.
+3. 공개 서명 URL을 별도 기기에서 열고 식별·서명을 제출한다.
+4. 관리자 전체보기를 열어 둔 채 서명을 제출했을 때 새 서명이 즉시 반영된다. DevTools Network에서 SSE 응답이 `text/event-stream`이고 `X-Accel-Buffering: no`인지 확인한다.
+5. 최소 10분 동안 전체보기를 열어 SSE가 90초 전후에 끊기지 않는지 확인한다.
 
-두 번째 요청이 성공하더라도 애플리케이션 로그에는 NPM이 관측한 테스트 client IP만 있어야 하고 주입한 문서용 주소나 forwarded header가 신뢰되면 실패다. 로그·스크린샷에서는 client IP와 쿠키 값을 가린다.
+## 8. 자주 발생하는 문제
 
-SSE는 관리자 전체보기에서 개발자 도구 Network를 열어 검증한다. 응답 `Content-Type: text/event-stream`과 `X-Accel-Buffering: no`를 확인하고 10분 동안 두 번의 synthetic 변경이 즉시 도착하는지 기록한다. 동시에 mutation 요청이 완전한 body로 정상 처리되는지 확인한다. 쿠키 evidence는 이름과 속성만 남기고 값을 완전히 가린다.
-
-### 8.2 브라우저 행사 흐름
-
-1. https://signing.lapis0875.com 에서 관리자 로그인한다.
-2. Secure, HttpOnly 관리자 세션 쿠키가 생성되고 HTTP 주소에서는 전달되지 않는지 브라우저 개발자 도구로 확인한다.
-3. 보드를 열고 QR 또는 공유 링크를 iPad Safari와 Android Chrome에서 연다.
-4. 명단 정보 식별·서명 제출 뒤 관리자 편집 화면과 전체보기의 SSE 갱신을 확인한다.
-5. 전체보기를 최소 10분 열어 두고 새 제출이 즉시 반영되는지 확인한다.
-6. 링크를 재발급하고, 이전 탭의 서명 제출이 일반 무효 안내를 받는지 확인한다.
-7. 보드를 마감하고 final.png 다운로드를 확인한다.
-
-### 8.3 배포 전 release preflight
-
-1. GitHub Actions `Manual immutable release`를 `dry_run: true`로 실행한다. 기존 annotated `vX.Y.Z`의 peeled SHA가 승인 candidate와 같아야 하며 registry/Portainer call 수는 0이어야 한다.
-2. frontend/backend image 이름, 동일 revision SHA, 예상 package privacy, 현재 Portainer pair를 기록한다. digest와 SHA는 기록할 수 있지만 credential, cookie, share token, webhook URL은 `[REDACTED]`로 대체한다.
-3. non-dry 실행은 GitHub `production` environment reviewer 승인 뒤에만 허용한다. 두 image digest/revision 검증 전에 webhook이 호출되면 실패다.
-4. backend/PostgreSQL/MinIO/Portainer/webhook이 public하지 않은지 확인한다. manual Stack을 수정·재생성하지 않는다.
-
-### 8.4 배포 뒤 점검
-
-- GitHub Actions가 선택한 vX.Y.Z 이미지 태그와 Portainer Stack의 실제 image tag가 일치하는지 확인한다.
-- backend health가 UP이고 Flyway 오류가 없는지 확인한다.
-- PostgreSQL과 MinIO 볼륨이 /srv/narae-signing 아래 bind mount를 사용하는지 확인한다.
-- 이 절차는 backup 기능을 만들거나 실행하지 않는다. 기존 운영 backup 정책의 존재 여부만 별도 위험 기록으로 남긴다.
-
-## 9. 장애 진단
-
-| 증상 | 우선 확인할 항목 |
+| 증상 | 우선 확인할 원인 |
 | --- | --- |
-| 인증서 발급 실패 | DNS A 레코드, WAN 80 전달, NPM 80 수신, CGNAT 여부 |
-| 502 Bad Gateway | NPM→APP_LXC_IP:8080 연결, LXC 방화벽, frontend 컨테이너 health |
-| HTTPS 리다이렉트 반복 | Force SSL, X-Forwarded-Proto 보존, Spring forward headers 설정 |
-| 로그인 뒤 쿠키가 없음 | HTTPS 인증서, Secure 속성, 같은 공개 origin, 서버 시간 |
-| 전체보기 갱신이 늦음 | frontend·NPM proxy_buffering off, 3600초 timeout, backend SSE 연결 |
-| 정적 화면은 보이지만 API 실패 | frontend Nginx의 /api proxy_pass, backend health, Compose 내부 DNS backend |
-| MinIO·PostgreSQL이 외부에서 보임 | Compose ports, LXC 방화벽, 라우터 포트 전달 규칙을 즉시 점검 |
+| NPM `502 Bad Gateway` | NPM LXC→`APP_LXC_IP:FRONTEND_PORT` 연결, Proxmox 방화벽, Compose health |
+| 인증서 발급 실패 | DNS A 레코드, pfSense WAN `80` NAT, CGNAT, NPM `80` 수신 |
+| 관리자 로그인에서 `INVALID_CLIENT_IP` 또는 400 | Custom Location `/`의 `X-Narae-Client-IP` 설정 누락·오타, NPM 앞의 추가 프록시 |
+| 로그인 뒤 세션이 사라짐 | `APP_PUBLIC_ORIGIN`과 공개 도메인 불일치, Force SSL, HTTPS 인증서, `X-Forwarded-Proto` 전달 |
+| 이미지 업로드가 즉시 413 | Proxy Host Advanced의 `client_max_body_size 52500000;` 누락, 실제 파일·multipart 요청이 상한 초과 |
+| 작은 업로드만 실패 | endpoint별 frontend/backend 상한을 넘었는지 확인. NPM 상한을 무작정 키우지 않는다. |
+| 전체보기 갱신이 늦거나 끊김 | 3600초 timeout 누락, NPM/상위 프록시 버퍼링, 브라우저 Network의 SSE 응답 확인 |
+| 앱은 보이지만 API가 실패 | NPM이 frontend가 아닌 backend·MinIO·Docker 내부 IP로 향하는지, `/api/` frontend proxy가 정상인지 확인 |
 
-## 10. 변경·롤백 원칙
+## 9. 안전한 변경과 롤백
 
-- Proxy Host 설정 변경 전 NPM 화면의 현재 값을 기록한다.
-- 인증서·도메인 문제를 해결할 때 APP_LXC_IP나 내부 포트 공개 범위를 넓히지 않는다.
-- 롤백 전에 `scripts/release/validate-rollback.sh CURRENT_TAG ROLLBACK_TAG`로 더 낮고 서로 다른 기존 annotated tag, origin/local object 일치, peeled commit을 검증한다. frontend/backend의 private GHCR image가 그 commit revision과 일치할 때만 pair로 선택하고 webhook을 마지막에 호출한다.
-- 롤백은 image pair만 선택한다. down migration, volume 삭제, manual Stack 재생성, 이 문서 범위의 backup 작업을 하지 않는다. 현재 DB schema와 이전 backend의 호환성이 입증되지 않으면 중단한다.
-- NPM이 Let’s Encrypt 인증서를 자동 갱신할 수 있도록 80/443 전달 규칙과 DNS A 레코드를 지속적으로 유지한다.
+- Proxy Host를 변경하기 전 NPM WebUI에서 현재 Details, Custom Locations, Advanced, SSL 값을 캡처한다. 캡처에는 인증서 개인키·쿠키·토큰을 포함하지 않는다.
+- 문제가 생기면 NaraeSign LXC의 공개 포트를 늘리지 말고, NPM Proxy Host를 직전 값으로 되돌린다.
+- `5432`, `9000`, `9001`, backend 포트를 임시로 공개해서 502를 우회하지 않는다.
+- Proxy Host를 제거하기보다 먼저 **Disable**하여 DNS·인증서·NAT와 분리해 진단한다.
+
+## 10. 구현 근거
+
+현재 Compose는 frontend만 `${FRONTEND_PORT:-8080}`으로 LXC에 publish하며, backend는 frontend Docker IP `172.30.0.10`에서 온 proxy header만 신뢰한다. frontend는 배경 업로드를 `52,500,000` bytes로 제한하고 SSE 응답에 버퍼링 해제 헤더를 붙인다. NPM의 Proxy Host와 Custom Location 설정은 이 계약을 그대로 보존해야 한다.
+
+- [Compose 설정](../infra/compose/compose.yml)
+- [frontend Nginx 설정](../infra/nginx/default.conf)
+- [빠른 배포 가이드](DEPLOY_GUIDE.md)
+- [Proxmox LXC 배포 가이드](PROXMOX_LXC_DEPLOY_GUIDE.md)

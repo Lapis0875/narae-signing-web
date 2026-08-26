@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.naraesigning.NaraeSigningApplication;
+import com.naraesigning.admin.AdminCommand;
 import com.naraesigning.crypto.VersionedCryptoService;
 import jakarta.servlet.http.Cookie;
 import java.sql.DriverManager;
@@ -33,6 +34,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -68,6 +70,7 @@ class LoginApiTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired MutableClock clock;
     @Autowired PlatformTransactionManager transactions;
+    @Autowired ApplicationContext context;
 
     @BeforeEach
     void clearDatabaseAndClock() {
@@ -77,6 +80,16 @@ class LoginApiTest {
         jdbc.update("delete from admin_login_ip_window");
         jdbc.update("delete from admin_user");
         clock.set(Instant.parse("2026-08-20T00:00:00Z"));
+    }
+
+    @Test
+    void registersAdminCommandWhenDatasourceIsConfigured() {
+        // Given: the application context has the production JDBC configuration.
+
+        // When: the context has completed startup.
+
+        // Then: the one-shot administrator command is available to the launcher.
+        assertThat(context.getBeansOfType(AdminCommand.class)).hasSize(1);
     }
 
     @Test

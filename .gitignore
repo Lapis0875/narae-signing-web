@@ -9,3 +9,7 @@ backend/build/
 .env
 .env.*
 !.env.example
+.omo/
+.ruff_cache/
+bin/
+.worktrees/

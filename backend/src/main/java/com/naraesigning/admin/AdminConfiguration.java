@@ -1,13 +1,13 @@
 package com.naraesigning.admin;
 
 import com.naraesigning.session.AdminSessionInvalidator;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcOperations;
 
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnBean(JdbcOperations.class)
+@ConditionalOnProperty("spring.datasource.url")
 class AdminConfiguration {
     @Bean
     AdminUserService adminUserService(JdbcOperations jdbc, AdminSessionInvalidator sessions) {
