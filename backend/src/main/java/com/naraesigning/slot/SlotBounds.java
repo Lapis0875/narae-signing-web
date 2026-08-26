@@ -13,10 +13,14 @@ public record SlotBounds(BigDecimal x, BigDecimal y, BigDecimal width, BigDecima
         Objects.requireNonNull(y, "y");
         Objects.requireNonNull(width, "width");
         Objects.requireNonNull(height, "height");
-        x = x.setScale(8, RoundingMode.UNNECESSARY);
-        y = y.setScale(8, RoundingMode.UNNECESSARY);
-        width = width.setScale(8, RoundingMode.UNNECESSARY);
-        height = height.setScale(8, RoundingMode.UNNECESSARY);
+        try {
+            x = x.setScale(8, RoundingMode.UNNECESSARY);
+            y = y.setScale(8, RoundingMode.UNNECESSARY);
+            width = width.setScale(8, RoundingMode.UNNECESSARY);
+            height = height.setScale(8, RoundingMode.UNNECESSARY);
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException("Slot bounds must use at most 8 decimal places", exception);
+        }
         if (x.compareTo(ZERO) < 0 || y.compareTo(ZERO) < 0
                 || width.compareTo(ZERO) <= 0 || height.compareTo(ZERO) <= 0
                 || x.add(width).compareTo(ONE) > 0 || y.add(height).compareTo(ONE) > 0) {

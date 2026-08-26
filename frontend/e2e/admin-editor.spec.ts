@@ -33,6 +33,10 @@ async function syntheticPng(page: Page, first: string, second: string) {
 
 type CaptureOptions = { readonly anchor?: Locator; readonly dialog?: boolean; readonly scrollOffset?: number }
 
+function fractionDigits(value: number) {
+  return (String(value).split(".").at(1) ?? "").length
+}
+
 async function captureState(page: Page, state: string, options: CaptureOptions = {}) {
   for (const width of [375, 768, 1280]) {
     const height = width === 1280 ? 800 : 812
@@ -73,7 +77,7 @@ test("@admin-editor edits the authoritative canvas and recovers failed mutations
   ]
   let share = { shareToken: "safe-share-one", version: 1 }
   let currentBackground = await syntheticPng(page, "seagreen", "midnightblue"); const replacementBackground = await syntheticPng(page, "royalblue", "goldenrod")
-  let patchCount = 0, backgroundCount = 0, backgroundGets = 0, latestPatchX = 0
+  let patchCount = 0, backgroundCount = 0, backgroundGets = 0, latestPatchFractionDigits = 0, latestPatchX = 0
   const latestPatchBySlot = new Map<string, { readonly x: number; readonly y: number }>()
   let rejectNextBackgroundRead = false, rejectNextPatch = false, rejectNextBackground = true
   let holdNextPatch = false, holdNextSuccessfulPatch = false
@@ -121,6 +125,7 @@ test("@admin-editor edits the authoritative canvas and recovers failed mutations
       patchCount += 1
       const body = request.postDataJSON(), slotId = pathname.split("/").at(-1)
       if (slotId === undefined) throw new Error("Missing slot id")
+      latestPatchFractionDigits = Math.max(...[body.height, body.width, body.x, body.y].map(fractionDigits))
       latestPatchX = body.x; latestPatchBySlot.set(slotId, { x: body.x, y: body.y })
       if (patchCount === 1) await firstPatchGate
       if (holdNextPatch) { holdNextPatch = false; await rejectedPatchGate }
@@ -189,7 +194,7 @@ test("@admin-editor edits the authoritative canvas and recovers failed mutations
   await captureState(page, "keyboard-placed", { anchor: canvas })
   const canvasBox = await canvas.boundingBox()
   if (canvasBox === null) throw new Error("Canvas bounds unavailable")
-  await nextKeyboardPlacement.locator("..").locator(".editor-unplaced-drag").dragTo(canvas, { targetPosition: { x: canvasBox.width * 0.24, y: 0 } })
+  await nextKeyboardPlacement.dragTo(canvas, { targetPosition: { x: canvasBox.width * 0.24, y: 0 } })
   await expect.poll(() => patchCount).toBe(2)
   await expect(page.getByLabel("자동 저장 상태")).toHaveText("저장됨")
   await captureState(page, "drag-touching-edge", { anchor: canvas })
@@ -239,6 +244,16 @@ test("@admin-editor edits the authoritative canvas and recovers failed mutations
   await captureState(page, "authoritative-409-recovery", { anchor: canvas })
   releaseSuccessfulPatch()
   await expect(page.getByLabel("자동 저장 상태")).toHaveText("저장됨")
+
+  const pointerMoveBounds = await moveButton.boundingBox()
+  if (pointerMoveBounds === null) throw new Error("Move control bounds unavailable")
+  const pointerMovePatchCount = patchCount
+  await page.mouse.move(pointerMoveBounds.x + pointerMoveBounds.width / 2, pointerMoveBounds.y + pointerMoveBounds.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(pointerMoveBounds.x + pointerMoveBounds.width / 2 + 17, pointerMoveBounds.y + pointerMoveBounds.height / 2 + 13)
+  await page.mouse.up()
+  await expect.poll(() => patchCount).toBe(pointerMovePatchCount + 1)
+  expect(latestPatchFractionDigits).toBeLessThanOrEqual(8)
 
   const upload = page.getByLabel("PNG 또는 JPEG")
   const currentBackgroundSrc = await canvas.locator("img.editor-canvas-background").getAttribute("src")

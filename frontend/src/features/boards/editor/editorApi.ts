@@ -66,12 +66,28 @@ export async function saveSlot(
     width: z.number(),
     x: z.number(),
     y: z.number(),
-  }).parse({ ...normalizedBoundsSchema.parse(bounds), background })
+  }).parse({ ...storageBounds(bounds), background })
   return parsedApiRequest(
     `/api/v1/admin/boards/${z.uuid().parse(boardId)}/slots/${z.uuid().parse(slotId)}`,
     slotResponseSchema,
     { body: JSON.stringify(body), headers: { "Content-Type": "application/json" }, method: "PATCH" },
   )
+}
+
+function storageBounds(bounds: Bounds): Bounds {
+  const parsed = normalizedBoundsSchema.parse(bounds)
+  const height = storageDecimal(parsed.height)
+  const width = storageDecimal(parsed.width)
+  return normalizedBoundsSchema.parse({
+    height,
+    width,
+    x: Math.min(storageDecimal(parsed.x), storageDecimal(1 - width)),
+    y: Math.min(storageDecimal(parsed.y), storageDecimal(1 - height)),
+  })
+}
+
+function storageDecimal(value: number): number {
+  return Number(value.toFixed(8))
 }
 
 export async function unplaceSlot(boardId: string, slotId: string): Promise<void> {

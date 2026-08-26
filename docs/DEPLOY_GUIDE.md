@@ -76,16 +76,18 @@ FRONTEND_PORT=8080
 openssl rand -base64 36
 ```
 
-| 변수 | 설정 방법 |
-| --- | --- |
-| `POSTGRES_DB`, `POSTGRES_USER` | 이 배포 전용 데이터베이스 이름과 계정 이름을 정한다. |
-| `POSTGRES_PASSWORD` | PostgreSQL 계정의 새 무작위 비밀번호를 넣는다. |
-| `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | MinIO 전용 접근 ID와 새 무작위 비밀번호를 넣는다. 다른 환경과 재사용하지 않는다. |
-| `APP_MINIO_BUCKET` | 서명 파일을 둘 버킷 이름을 정한다. 예: `narae-signatures`. |
-| `APP_PUBLIC_ORIGIN` | 사용자가 실제로 접속할 **정확한 HTTPS 주소**다. 예: `https://signing.example.com`. 프록시 내부 HTTP 주소나 `http://localhost`를 넣지 않는다. |
-| `APP_CRYPTO_KEY_VERSION` | 새 환경은 `1`로 시작한다. 같은 데이터 루트에서는 키 교체 절차 없이 값을 바꾸지 않는다. |
-| `NARAE_DATA_ROOT` | PostgreSQL, MinIO, master key를 보관할 절대 경로다. 위에서 만든 경로와 같아야 한다. |
-| `FRONTEND_PORT` | 앱 호스트에서 frontend만 열 포트다. 기본값은 `8080`이다. |
+
+| 변수                                       | 설정 방법                                                                                                         |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `POSTGRES_DB`, `POSTGRES_USER`           | 이 배포 전용 데이터베이스 이름과 계정 이름을 정한다.                                                                                |
+| `POSTGRES_PASSWORD`                      | PostgreSQL 계정의 새 무작위 비밀번호를 넣는다.                                                                               |
+| `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | MinIO 전용 접근 ID와 새 무작위 비밀번호를 넣는다. 다른 환경과 재사용하지 않는다.                                                            |
+| `APP_MINIO_BUCKET`                       | 서명 파일을 둘 버킷 이름을 정한다. 예: `narae-signatures`.                                                                   |
+| `APP_PUBLIC_ORIGIN`                      | 사용자가 실제로 접속할 **정확한 HTTPS 주소**다. 예: `https://signing.example.com`. 프록시 내부 HTTP 주소나 `http://localhost`를 넣지 않는다. |
+| `APP_CRYPTO_KEY_VERSION`                 | 새 환경은 `1`로 시작한다. 같은 데이터 루트에서는 키 교체 절차 없이 값을 바꾸지 않는다.                                                          |
+| `NARAE_DATA_ROOT`                        | PostgreSQL, MinIO, master key를 보관할 절대 경로다. 위에서 만든 경로와 같아야 한다.                                                 |
+| `FRONTEND_PORT`                          | 앱 호스트에서 frontend만 열 포트다. 기본값은 `8080`이다.                                                                       |
+
 
 ## 4. HTTPS와 리버스 프록시
 
@@ -143,14 +145,16 @@ docker compose --env-file infra/compose/.env -f infra/compose/compose.yml exec b
 
 ## 7. 자주 막히는 지점
 
-| 증상 | 먼저 확인할 것 |
-| --- | --- |
-| `config --quiet` 실패 | `.env`의 필수 변수 누락, `NARAE_DATA_ROOT`가 절대 경로인지 확인한다. |
-| 로그인 뒤 세션이 유지되지 않음 | HTTPS 여부, `APP_PUBLIC_ORIGIN`의 정확한 도메인, 프록시의 `X-Forwarded-Proto: https` 전달을 확인한다. |
-| 프록시에서 502 | 프록시에서 앱 호스트 `FRONTEND_PORT`의 `/health`에 연결되는지, 앱 호스트 방화벽을 확인한다. |
-| 화면은 보이지만 API가 실패 | `backend` health와 frontend의 `/api/` 프록시 연결을 확인한다. |
-| `minio-init`가 성공 종료하지 않음 | MinIO 자격 증명, 버킷 이름, MinIO health를 확인한다. |
-| 서비스가 반복 재시작하거나 느림 | Docker 상태, 디스크 여유, 메모리와 swap 압박을 확인한다. 같은 기동을 반복하지 않는다. |
+
+| 증상                       | 먼저 확인할 것                                                                          |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| `config --quiet` 실패      | `.env`의 필수 변수 누락, `NARAE_DATA_ROOT`가 절대 경로인지 확인한다.                                |
+| 로그인 뒤 세션이 유지되지 않음        | HTTPS 여부, `APP_PUBLIC_ORIGIN`의 정확한 도메인, 프록시의 `X-Forwarded-Proto: https` 전달을 확인한다. |
+| 프록시에서 502                | 프록시에서 앱 호스트 `FRONTEND_PORT`의 `/health`에 연결되는지, 앱 호스트 방화벽을 확인한다.                   |
+| 화면은 보이지만 API가 실패         | `backend` health와 frontend의 `/api/` 프록시 연결을 확인한다.                                 |
+| `minio-init`가 성공 종료하지 않음 | MinIO 자격 증명, 버킷 이름, MinIO health를 확인한다.                                           |
+| 서비스가 반복 재시작하거나 느림        | Docker 상태, 디스크 여유, 메모리와 swap 압박을 확인한다. 같은 기동을 반복하지 않는다.                           |
+
 
 진단이 필요하면 비밀값을 출력하지 않는 범위에서 최근 로그만 본다.
 

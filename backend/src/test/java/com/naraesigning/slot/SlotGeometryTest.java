@@ -40,7 +40,7 @@ class SlotGeometryTest {
         assertThatThrownBy(() -> SlotBounds.of(decimal("0"), decimal("0.9"), decimal("1"), decimal("0.10000001")))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> SlotBounds.of(decimal("0"), decimal("0"), decimal("0.000000001"), decimal("1")))
-                .isInstanceOf(ArithmeticException.class);
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

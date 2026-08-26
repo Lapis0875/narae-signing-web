@@ -164,6 +164,24 @@ final class BoardAdminApiStatefulTest {
     }
 
     @Test
+    void highPrecisionSlotPatchReturnsInvalidRequestWithoutChangingTheBoard() throws Exception {
+        // Given
+        var session = session(OWNER, NOW);
+        perform(post("/api/v1/admin/boards").contentType(APPLICATION_JSON)
+                .content("{\"title\":\"행사\"}"), session).andExpect(status().isOk());
+        var roster = perform(post(rosterPath()).contentType(APPLICATION_JSON).content(identity("A")), session)
+                .andExpect(status().isOk()).andReturn();
+        UUID slotId = UUID.fromString(json(roster, "/slot/id"));
+        String before = graph.canonicalGraph();
+
+        // When / Then
+        perform(patch(boardPath() + "/slots/" + slotId).contentType(APPLICATION_JSON)
+                        .content("{\"x\":0.123456789,\"y\":0.1,\"width\":0.2,\"height\":0.2,\"background\":\"white\"}"), session)
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+        assertThat(graph.canonicalGraph()).isEqualTo(before);
+    }
+
+    @Test
     void rejectedRequestsPreserveExactStateAndReturnStableSafeErrors() throws Exception {
         var ownerSession = session(OWNER, NOW);
         var created = perform(post("/api/v1/admin/boards").contentType(APPLICATION_JSON)
