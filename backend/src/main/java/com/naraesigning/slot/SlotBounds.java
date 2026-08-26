@@ -5,6 +5,7 @@ import java.math.RoundingMode;
 import java.util.Objects;
 
 public record SlotBounds(BigDecimal x, BigDecimal y, BigDecimal width, BigDecimal height) {
+    private static final int SCALE = 8;
     private static final BigDecimal ZERO = BigDecimal.ZERO;
     private static final BigDecimal ONE = BigDecimal.ONE;
 
@@ -13,23 +14,26 @@ public record SlotBounds(BigDecimal x, BigDecimal y, BigDecimal width, BigDecima
         Objects.requireNonNull(y, "y");
         Objects.requireNonNull(width, "width");
         Objects.requireNonNull(height, "height");
-        try {
-            x = x.setScale(8, RoundingMode.UNNECESSARY);
-            y = y.setScale(8, RoundingMode.UNNECESSARY);
-            width = width.setScale(8, RoundingMode.UNNECESSARY);
-            height = height.setScale(8, RoundingMode.UNNECESSARY);
-        } catch (ArithmeticException exception) {
-            throw new IllegalArgumentException("Slot bounds must use at most 8 decimal places", exception);
-        }
         if (x.compareTo(ZERO) < 0 || y.compareTo(ZERO) < 0
                 || width.compareTo(ZERO) <= 0 || height.compareTo(ZERO) <= 0
                 || x.add(width).compareTo(ONE) > 0 || y.add(height).compareTo(ONE) > 0) {
             throw new IllegalArgumentException("Slot bounds must be inside the normalized canvas");
         }
+        width = canonical(width);
+        height = canonical(height);
+        if (width.compareTo(ZERO) <= 0 || height.compareTo(ZERO) <= 0) {
+            throw new IllegalArgumentException("Slot bounds must be inside the normalized canvas");
+        }
+        x = canonical(x).min(ONE.subtract(width));
+        y = canonical(y).min(ONE.subtract(height));
     }
 
     public static SlotBounds of(BigDecimal x, BigDecimal y, BigDecimal width, BigDecimal height) {
         return new SlotBounds(x, y, width, height);
+    }
+
+    private static BigDecimal canonical(BigDecimal value) {
+        return value.setScale(SCALE, RoundingMode.HALF_UP);
     }
 
     public BigDecimal right() {

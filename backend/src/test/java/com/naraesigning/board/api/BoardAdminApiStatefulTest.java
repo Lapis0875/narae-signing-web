@@ -164,7 +164,7 @@ final class BoardAdminApiStatefulTest {
     }
 
     @Test
-    void highPrecisionSlotPatchReturnsInvalidRequestWithoutChangingTheBoard() throws Exception {
+    void machinePrecisionSlotPatchIsCanonicalizedBeforePersistence() throws Exception {
         // Given
         var session = session(OWNER, NOW);
         perform(post("/api/v1/admin/boards").contentType(APPLICATION_JSON)
@@ -172,13 +172,13 @@ final class BoardAdminApiStatefulTest {
         var roster = perform(post(rosterPath()).contentType(APPLICATION_JSON).content(identity("A")), session)
                 .andExpect(status().isOk()).andReturn();
         UUID slotId = UUID.fromString(json(roster, "/slot/id"));
-        String before = graph.canonicalGraph();
 
         // When / Then
         perform(patch(boardPath() + "/slots/" + slotId).contentType(APPLICATION_JSON)
-                        .content("{\"x\":0.123456789,\"y\":0.1,\"width\":0.2,\"height\":0.2,\"background\":\"white\"}"), session)
-                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
-        assertThat(graph.canonicalGraph()).isEqualTo(before);
+                        .content("{\"background\":\"transparent\",\"height\":0.18,\"width\":0.24,\"x\":0.367359375,\"y\":0.7693842592592594}"), session)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bounds.x").value(0.36735938))
+                .andExpect(jsonPath("$.bounds.y").value(0.76938426));
     }
 
     @Test
