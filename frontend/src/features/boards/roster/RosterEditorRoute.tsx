@@ -17,6 +17,7 @@ import {
   describeRosterError,
   importRosterFile,
   replaceRoster,
+  resetRosterSignature,
   RosterImportRejectedError,
   rosterQueryKey,
   updateRosterEntry,
@@ -60,6 +61,14 @@ export function RosterEditorRoute() {
       showToast("명단을 삭제했습니다.")
     },
   })
+  const signatureRemoval = useMutation({
+    mutationFn: (slotId: string) => resetRosterSignature(boardId, slotId),
+    onError: (error) => notifyFailure("서명을 지우지 못했습니다", error),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: rosterQueryKey(boardId) })
+      showToast("제출된 서명을 지웠습니다.")
+    },
+  })
   const replacement = useMutation({
     mutationFn: (rows: readonly RosterIdentity[]) => replaceRoster(boardId, rows),
     onError: (error) => notifyFailure("서버 명단으로 갱신하지 못했습니다", error),
@@ -77,9 +86,9 @@ export function RosterEditorRoute() {
       showToast("파일 명단을 가져왔습니다.")
     },
   })
-  const isSaving = addition.isPending || update.isPending || removal.isPending
+  const isSaving = addition.isPending || update.isPending || removal.isPending || signatureRemoval.isPending
     || replacement.isPending || fileImport.isPending
-  const mutationError = addition.error ?? update.error ?? removal.error ?? replacement.error ?? fileImport.error
+  const mutationError = addition.error ?? update.error ?? removal.error ?? signatureRemoval.error ?? replacement.error ?? fileImport.error
   const serverMarkers = fileImport.error instanceof RosterImportRejectedError ? fileImport.error.markers : []
 
   if (board.isPending || roster.isPending) {
@@ -130,6 +139,7 @@ export function RosterEditorRoute() {
               entries={roster.data}
               isSaving={isSaving}
               onDelete={(entryId) => removal.mutate(entryId)}
+              onResetSignature={(slotId) => signatureRemoval.mutate(slotId)}
               onSave={(entryId, identity) => update.mutate({ entryId, identity })}
             />
             <RosterImportPanel

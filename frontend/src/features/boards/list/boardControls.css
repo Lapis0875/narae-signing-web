@@ -110,6 +110,11 @@
   align-items: center;
 }
 
+.roster-card-destructive-actions {
+  display: flex;
+  gap: var(--space-8);
+}
+
 .board-links {
   gap: var(--space-16);
 }
@@ -137,6 +142,19 @@
 
 .board-card-title {
   margin: var(--space-0);
+}
+
+@media (max-width: 30rem) {
+  .roster-card-actions > .board-button,
+  .roster-card-destructive-actions {
+    inline-size: 100%;
+  }
+
+  .roster-card-destructive-actions .board-button {
+    flex: 1;
+    min-inline-size: var(--space-0);
+    padding-inline: var(--space-8);
+  }
 }
 
 .board-section-title {

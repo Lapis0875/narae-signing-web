@@ -12,6 +12,7 @@ export function RosterImportPanel({ isSaving, onImportFile, onReplace }: RosterI
   const [file, setFile] = useState<File | null>(null)
   const [pasteValue, setPasteValue] = useState("")
   const [preview, setPreview] = useState<RosterPreview | null>(null)
+  const pastePreview = previewRosterText(pasteValue)
 
   const renderPreview = () => preview === null ? null : (
     <section aria-label="명단 미리보기">
@@ -35,19 +36,18 @@ export function RosterImportPanel({ isSaving, onImportFile, onReplace }: RosterI
       <textarea
         className="board-textarea"
         id="roster-paste"
-        onChange={(event) => setPasteValue(event.target.value)}
+        onChange={(event) => {
+          setPasteValue(event.target.value)
+          setPreview(null)
+        }}
         value={pasteValue}
       />
       <div className="board-actions">
-        <button className="board-button" onClick={() => setPreview(previewRosterText(pasteValue))} type="button">붙여넣기 미리보기</button>
+        <button className="board-button" onClick={() => setPreview(pastePreview)} type="button">붙여넣기 미리보기</button>
         <button
           className="board-button board-button--primary"
-          disabled={isSaving || preview === null || preview.markers.length > 0}
-          onClick={() => {
-            if (preview !== null) {
-              onReplace(preview.rows)
-            }
-          }}
+          disabled={isSaving || pasteValue.length === 0 || pastePreview.markers.length > 0}
+          onClick={() => onReplace(pastePreview.rows)}
           type="button"
         >붙여넣기 적용</button>
       </div>

@@ -15,9 +15,9 @@
 .slot-overlay--collision { border-color: var(--color-ink-navy); background: var(--color-hairline); }
 .board-editor .slot-move { min-height: var(--space-24); padding: var(--space-0); border: var(--space-0); background: transparent; cursor: move; text-align: start; }
 .slot-actions { display: flex; gap: var(--space-4); }
-.board-editor .slot-actions .board-button { min-height: var(--space-32); padding: var(--space-4); font-size: var(--font-size-label); }
+.board-editor .slot-actions .board-button { inline-size: var(--control-height); min-height: var(--control-height); padding: var(--space-4); font-size: var(--font-size-label); }
 .slot-actions svg { inline-size: var(--space-16); block-size: var(--space-16); }
-.board-editor .slot-resize { position: absolute; display: grid; place-items: center; inset-inline-end: var(--space-0); inset-block-end: var(--space-0); inline-size: var(--space-32); min-height: var(--space-32); padding: var(--space-4); border-radius: var(--radius-control) var(--space-0) var(--space-0) var(--space-0); cursor: nwse-resize; }
+.board-editor .slot-resize { position: absolute; display: grid; place-items: center; inset-inline-end: var(--space-0); inset-block-end: var(--space-0); inline-size: var(--control-height); min-height: var(--control-height); padding: var(--space-4); border-radius: var(--radius-control) var(--space-0) var(--space-0) var(--space-0); cursor: nwse-resize; }
 .slot-resize svg { inline-size: var(--space-16); block-size: var(--space-16); }
 .editor-sidebar { display: grid; gap: var(--space-16); }
 .editor-main-column { display: grid; gap: var(--space-24); min-inline-size: var(--space-0); }
@@ -39,6 +39,6 @@
   .slot-overlay { overflow: visible; }
   .board-editor .slot-move { position: absolute; inset-block-start: var(--space-0); inset-inline: var(--space-0); }
   .slot-actions { position: absolute; inset-block-start: calc(100% + var(--space-4)); inset-inline-start: var(--space-0); }
-  .board-editor .slot-resize { inset-block-start: calc(100% + var(--space-48)); inset-block-end: auto; inset-inline-start: var(--space-0); inset-inline-end: auto; border-radius: var(--radius-control); }
+  .board-editor .slot-resize { inset-block-start: calc(100% + var(--control-height) + var(--space-8)); inset-block-end: auto; inset-inline-start: var(--space-0); inset-inline-end: auto; border-radius: var(--radius-control); }
 }
 @media (max-width: 63.9375rem) { .editor-layout { grid-template-columns: 1fr; } .editor-toolbar, .editor-title-form { align-items: stretch; flex-direction: column; } .editor-title-form { min-inline-size: var(--space-0); } }

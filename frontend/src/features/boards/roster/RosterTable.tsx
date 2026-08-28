@@ -6,12 +6,19 @@ type RosterTableProps = {
   readonly entries: readonly RosterEntry[]
   readonly isSaving: boolean
   readonly onDelete: (entryId: string) => void
+  readonly onResetSignature: (slotId: string) => void
   readonly onSave: (entryId: string, identity: RosterIdentity) => void
 }
 
-export function RosterTable({ entries, isSaving, onDelete, onSave }: RosterTableProps) {
-  const deleteInvokerRef = useRef<HTMLButtonElement>(null)
+export function RosterTable({ entries, isSaving, onDelete, onResetSignature, onSave }: RosterTableProps) {
+  const actionInvokerRef = useRef<HTMLButtonElement>(null)
   const [deleteEntryId, setDeleteEntryId] = useState<string | null>(null)
+  const [resetSlotId, setResetSlotId] = useState<string | null>(null)
+
+  const cancelAction = () => {
+    setDeleteEntryId(null)
+    setResetSlotId(null)
+  }
 
   return (
     <>
@@ -38,17 +45,28 @@ export function RosterTable({ entries, isSaving, onDelete, onSave }: RosterTable
                 <input defaultValue={entry.identity.job} id={`job-${entry.id}`} name="job" />
                 <label htmlFor={`name-${entry.id}`}>이름</label>
                 <input defaultValue={entry.identity.name} id={`name-${entry.id}`} name="name" required />
-                <div className="board-actions">
+                <div className="board-actions roster-card-actions">
                   <button className="board-button" disabled={isSaving || entry.submitted} type="submit">수정 저장</button>
-                  <button
-                    className="board-button board-button--destructive"
-                    disabled={isSaving || entry.submitted}
-                    onClick={(event) => {
-                      deleteInvokerRef.current = event.currentTarget
-                      setDeleteEntryId(entry.id)
-                    }}
-                    type="button"
-                  >삭제</button>
+                  <div className="roster-card-destructive-actions">
+                    <button
+                      className="board-button board-button--destructive"
+                      disabled={isSaving || entry.submitted}
+                      onClick={(event) => {
+                        actionInvokerRef.current = event.currentTarget
+                        setDeleteEntryId(entry.id)
+                      }}
+                      type="button"
+                    >삭제</button>
+                    <button
+                      className="board-button"
+                      disabled={isSaving || !entry.submitted}
+                      onClick={(event) => {
+                        actionInvokerRef.current = event.currentTarget
+                        setResetSlotId(entry.slot.id)
+                      }}
+                      type="button"
+                    >서명만 지우기</button>
+                  </div>
                 </div>
                 {entry.submitted ? <p>서명이 제출되어 명단을 바꿀 수 없습니다.</p> : null}
               </form>
@@ -57,17 +75,19 @@ export function RosterTable({ entries, isSaving, onDelete, onSave }: RosterTable
         </ul>
       )}
       <ConfirmDialog
-        confirmLabel="삭제"
-        invokerRef={deleteInvokerRef}
-        message="선택한 명단을 삭제할까요?"
-        onCancel={() => setDeleteEntryId(null)}
+        confirmLabel={resetSlotId === null ? "삭제" : "서명 지우기"}
+        invokerRef={actionInvokerRef}
+        message={resetSlotId === null ? "선택한 명단을 삭제할까요?" : "제출된 서명만 지우고 명단과 배치는 유지할까요?"}
+        onCancel={cancelAction}
         onConfirm={() => {
-          if (deleteEntryId !== null) {
+          if (resetSlotId !== null) {
+            onResetSignature(resetSlotId)
+          } else if (deleteEntryId !== null) {
             onDelete(deleteEntryId)
           }
-          setDeleteEntryId(null)
+          cancelAction()
         }}
-        open={deleteEntryId !== null}
+        open={deleteEntryId !== null || resetSlotId !== null}
       />
     </>
   )

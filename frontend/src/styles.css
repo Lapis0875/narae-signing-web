@@ -113,6 +113,10 @@ label {
   padding-block: var(--space-48);
 }
 
+.app-main--editor {
+  width: calc(100% - var(--space-16));
+}
+
 .app-panel {
   max-width: var(--panel-default-max);
   margin-inline: auto;
@@ -207,6 +211,10 @@ a:focus-visible {
   .app-main {
     width: min(100% - var(--space-24), var(--content-max));
     padding-block: var(--space-24);
+  }
+
+  .app-main--editor {
+    width: calc(100% - var(--space-16));
   }
 
   .app-panel {

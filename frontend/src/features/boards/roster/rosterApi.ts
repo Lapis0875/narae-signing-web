@@ -114,6 +114,10 @@ export async function deleteRosterEntry(boardId: string, entryId: string): Promi
   await apiRequest(`/api/v1/admin/boards/${boardId}/roster/${entryId}`, { method: "DELETE" })
 }
 
+export async function resetRosterSignature(boardId: string, slotId: string): Promise<void> {
+  await apiRequest(`/api/v1/admin/boards/${boardId}/slots/${slotId}/reset-signature`, { method: "POST" })
+}
+
 export async function replaceRoster(
   boardId: string,
   rows: readonly RosterIdentity[],

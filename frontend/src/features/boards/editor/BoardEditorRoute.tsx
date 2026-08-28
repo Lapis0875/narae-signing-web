@@ -114,7 +114,7 @@ export function BoardEditorRoute({ actionExtensions }: BoardEditorRouteProps) {
   }
 
   return (
-    <AppShell>
+    <AppShell mainClassName="app-main--editor">
       <RealtimeBoardBridge boardId={boardId} refetchSnapshot={refreshSnapshot} />
       <main className="board-editor board-workflow">
         <h1 className="editor-route-title">{board.data.title}</h1>

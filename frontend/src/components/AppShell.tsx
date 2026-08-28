@@ -32,16 +32,17 @@ export function AppHeaderActions({ children }: AppHeaderActionsProps) {
 
 type AppShellProps = {
   readonly children: ReactNode;
+  readonly mainClassName?: string;
 };
 
-export function AppShell({ children }: AppShellProps) {
+export function AppShell({ children, mainClassName }: AppShellProps) {
   return (
     <div className="app-shell">
       <header className="app-header">
         <a href="/boards">나래 서명 보드</a>
         <div className="app-header-actions" ref={setAppHeaderActionsTarget} />
       </header>
-      <main className="app-main">{children}</main>
+      <main className={`app-main${mainClassName === undefined ? "" : ` ${mainClassName}`}`}>{children}</main>
     </div>
   );
 }
