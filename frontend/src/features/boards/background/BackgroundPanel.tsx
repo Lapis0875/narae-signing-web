@@ -29,16 +29,20 @@ export function BackgroundPanel({ disabled, onUpload }: BackgroundPanelProps) {
   return (
     <section className="editor-panel" aria-labelledby="background-title">
       <h2 id="background-title">배경</h2>
-      <label className="editor-file-field">
-        PNG 또는 JPEG
+      <div className="board-file-field">
         <input
           accept="image/png,image/jpeg"
+          aria-label="PNG 또는 JPEG 파일 선택"
+          className="board-file-input"
           disabled={disabled}
+          id="background-file"
           onChange={(event) => setFile(event.target.files?.item(0) ?? null)}
           ref={inputRef}
           type="file"
         />
-      </label>
+        <label className="board-button board-file-trigger" htmlFor="background-file">PNG 또는 JPEG 파일 선택</label>
+        <span aria-live="polite" className="board-file-name">{file?.name ?? "선택한 파일 없음"}</span>
+      </div>
       <div className="editor-actions">
         <button className="board-button" disabled={disabled || file === null} onClick={() => void upload(false)} type="button">
           기존 비율로 교체

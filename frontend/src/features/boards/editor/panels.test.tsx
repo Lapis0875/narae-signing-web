@@ -10,7 +10,7 @@ describe("BackgroundPanel", () => {
   it("Given a selected file When upload is rejected Then the selection is retained", async () => {
     const rejected = vi.fn(async () => { throw new Error("rejected") })
     render(<BackgroundPanel disabled={false} onUpload={rejected} />)
-    const input = screen.getByLabelText("PNG 또는 JPEG")
+    const input = screen.getByLabelText("PNG 또는 JPEG 파일 선택")
     const file = new File(["png"], "background.png", { type: "image/png" })
 
     fireEvent.change(input, { target: { files: { 0: file, item: () => file, length: 1 } } })

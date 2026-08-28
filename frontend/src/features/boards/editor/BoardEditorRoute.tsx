@@ -119,14 +119,14 @@ export function BoardEditorRoute({ actionExtensions }: BoardEditorRouteProps) {
       <main className="board-editor board-workflow">
         <h1 className="editor-route-title">{board.data.title}</h1>
         <BoardToolbar
-          actionExtensions={actionExtensions}
+          actionExtensions={board.data.status === "서명 진행" ? null : actionExtensions}
           board={board.data}
           disabled={busy}
           onRename={(title) => runBoardMutation(async () => { await renameBoard(boardId, title) })}
           onTransition={(action) => runBoardMutation(async () => { await transitionBoard(boardId, action); showToast("서명 상태를 변경했습니다.") })}
           saveState={saveState}
         />
-        <nav className="editor-links" aria-label="보드 편집 이동"><Link to="/boards">보드 목록</Link><Link to={`/boards/${boardId}/full`}>전체보기</Link></nav>
+        <nav className="editor-links" aria-label="보드 편집 이동"><Link className="board-button" to="/boards">보드 목록</Link><Link className="board-button board-button--primary" rel="noopener noreferrer" target="_blank" to={`/boards/${boardId}/full`}>전체보기</Link></nav>
         <div className="editor-layout">
           <div className="editor-main-column">
             <section className="editor-canvas-panel">

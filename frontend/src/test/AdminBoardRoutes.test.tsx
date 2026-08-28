@@ -151,7 +151,7 @@ describe("administrator board routes", () => {
     expect(screen.getByDisplayValue("교사")).toBeInTheDocument()
     expect(screen.getByDisplayValue("김나래")).toBeInTheDocument()
     expect(screen.getByLabelText("CSV 또는 XLSX 파일 선택")).toHaveAttribute("type", "file")
-    expect(screen.getByText("선택한 파일 없음")).toBeInTheDocument()
+    expect(screen.getAllByText("선택한 파일 없음")).toHaveLength(2)
   })
 
   it("adds a roster row and renders the accepted server value", async () => {

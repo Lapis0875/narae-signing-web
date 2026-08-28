@@ -71,9 +71,21 @@ describe("DeleteBoardAction", () => {
       }),
     );
   });
+
+  it("Given a list refresh callback When confirmed Then it refreshes in place", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+    setCsrfToken("csrf-test");
+    const onDeleted = vi.fn().mockResolvedValue(undefined);
+    renderAction(onDeleted);
+
+    fireEvent.click(screen.getByRole("button", { name: "보드 영구 삭제" }));
+    fireEvent.click(screen.getByRole("button", { name: "영구 삭제" }));
+
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1));
+  });
 });
 
-function renderAction() {
+function renderAction(onDeleted?: () => Promise<unknown>) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -81,7 +93,10 @@ function renderAction() {
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[`/boards/${boardId}/edit`]}>
         <Routes>
-          <Route path="/boards/:boardId/edit" element={<DeleteBoardAction />} />
+          <Route
+            path="/boards/:boardId/edit"
+            element={onDeleted === undefined ? <DeleteBoardAction /> : <DeleteBoardAction onDeleted={onDeleted} />}
+          />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,

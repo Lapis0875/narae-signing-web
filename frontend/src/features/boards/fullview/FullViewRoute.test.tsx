@@ -1,13 +1,13 @@
 import "@testing-library/jest-dom/vitest"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { afterEach, expect, it, vi } from "vitest"
 import { FullViewRoute } from "../../../routes/FullViewRoute.tsx"
 
 const boardId = "00000000-0000-4000-8000-000000000001"
 
-afterEach(() => { cleanup(); vi.restoreAllMocks() })
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks() })
 
 it("renders one control-free main landmark", async () => {
   // Given
@@ -102,4 +102,41 @@ it("keeps loading after the snapshot resolves until the background resolves", as
   expect(screen.queryByRole("img", { name: "서명 보드 전체보기" })).not.toBeInTheDocument()
   resolveBackground(new Response(null, { status: 204 }))
   await screen.findByRole("img", { name: "서명 보드 전체보기" })
+})
+
+it("refreshes the full view snapshot and background every five seconds", async () => {
+  // Given
+  vi.useFakeTimers()
+  let backgroundRequests = 0
+  let snapshotRequests = 0
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input.toString().endsWith("/background")) {
+      backgroundRequests += 1
+      return new Response(null, { status: 204 })
+    }
+    snapshotRequests += 1
+    return new Response(JSON.stringify({
+      backgroundPresent: false,
+      boardId,
+      canvasHeight: 600,
+      canvasWidth: 800,
+      slots: [],
+    }), { headers: { "Content-Type": "application/json" } })
+  })
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+  // When
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[`/boards/${boardId}/full`]}>
+        <Routes><Route element={<FullViewRoute />} path="/boards/:boardId/full" /></Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+  await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+
+  // Then
+  expect(snapshotRequests).toBe(2)
+  expect(backgroundRequests).toBe(2)
 })

@@ -95,8 +95,8 @@ export function RosterEditorRoute() {
       <section className="app-panel route-panel board-workflow">
         <h1>{board.data?.title ?? "보드 명단 편집"}</h1>
         <div className="board-links board-section-spaced">
-          <Link to="/boards">보드 목록</Link>
-          <Link to={`/boards/${boardId}/full`}>전체보기</Link>
+          <Link className="board-button" to="/boards">보드 목록</Link>
+          <Link className="board-button board-button--primary" rel="noopener noreferrer" target="_blank" to={`/boards/${boardId}/full`}>전체보기</Link>
           <button className="board-button" onClick={() => void roster.refetch()} type="button">명단 새로고침</button>
         </div>
         {board.error !== null || roster.error !== null ? (

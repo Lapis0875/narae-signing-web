@@ -3,6 +3,7 @@ import { Link } from "react-router-dom"
 import { AppShell } from "../../../components/AppShell.tsx"
 import { ForbiddenView, LoadingView } from "../../../components/AsyncViews.tsx"
 import { ApiError } from "../../../api/errors.ts"
+import { DeleteBoardAction } from "../editor/DeleteBoardAction.tsx"
 import { boardListQueryKey, fetchBoards } from "./boardApi.ts"
 import "./boardControls.css"
 
@@ -40,8 +41,9 @@ export function BoardListRoute() {
                 <h2 className="board-card-title">{board.title}</h2>
                 <p>{board.status}</p>
                 <div className="board-links">
-                  <Link to={`/boards/${board.id}/edit`}>명단 편집</Link>
-                  <Link to={`/boards/${board.id}/full`}>전체보기</Link>
+                  <Link className="board-button" to={`/boards/${board.id}/edit`}>명단 편집</Link>
+                  <Link className="board-button board-button--primary" rel="noopener noreferrer" target="_blank" to={`/boards/${board.id}/full`}>전체보기</Link>
+                  {board.status !== "서명 진행" ? <DeleteBoardAction boardId={board.id} onDeleted={() => boards.refetch()} /> : null}
                 </div>
               </li>
             ))}

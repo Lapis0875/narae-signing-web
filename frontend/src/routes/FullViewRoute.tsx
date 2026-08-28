@@ -8,8 +8,18 @@ import { useObjectUrl } from "../features/boards/editor/useObjectUrl.ts"
 
 export function FullViewRoute() {
   const { boardId = "missing" } = useParams()
-  const snapshot = useQuery({ queryFn: () => fetchFullViewSnapshot(boardId), queryKey: ["admin", "boards", boardId, "snapshot"] })
-  const background = useQuery({ queryFn: () => fetchFullViewBackground(boardId), queryKey: ["admin", "boards", boardId, "background"] })
+  const snapshot = useQuery({
+    queryFn: () => fetchFullViewSnapshot(boardId),
+    queryKey: ["admin", "boards", boardId, "snapshot"],
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: true,
+  })
+  const background = useQuery({
+    queryFn: () => fetchFullViewBackground(boardId),
+    queryKey: ["admin", "boards", boardId, "background"],
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: true,
+  })
   const backgroundUrl = useObjectUrl(background.data)
   const refetchSnapshot = useCallback(async () => {
     await Promise.all([snapshot.refetch(), background.refetch()])

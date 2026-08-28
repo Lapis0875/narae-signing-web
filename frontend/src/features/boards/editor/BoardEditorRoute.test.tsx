@@ -1,9 +1,11 @@
 import "@testing-library/jest-dom/vitest"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import type { ReactNode } from "react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { ToastProvider } from "../../../components/Toast.tsx"
+import type { Board } from "../list/boardApi.ts"
 import { BoardEditorRoute } from "./BoardEditorRoute.tsx"
 
 const boardId = "11111111-1111-4111-8111-111111111111"
@@ -41,20 +43,24 @@ function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" }, status })
 }
 
-function renderEditor(background: () => Response) {
+function renderEditor(
+  background: () => Response,
+  status: Board["status"] = board.status,
+  actionExtensions?: ReactNode,
+) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = input.toString()
     if (path.endsWith("/background")) return background()
     if (path.endsWith("/roster")) return json(roster)
     if (path.endsWith("/share")) return json({ shareToken: "safe-share", version: 1 })
-    return json(board)
+    return json({ ...board, status })
   })
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[`/boards/${boardId}/edit`]}>
         <ToastProvider>
-          <Routes><Route element={<BoardEditorRoute />} path="/boards/:boardId/edit" /></Routes>
+          <Routes><Route element={actionExtensions === undefined ? <BoardEditorRoute /> : <BoardEditorRoute actionExtensions={actionExtensions} />} path="/boards/:boardId/edit" /></Routes>
         </ToastProvider>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -88,12 +94,12 @@ describe("BoardEditorRoute", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("배경을 불러오지 못했습니다")
     expect(screen.getByRole("alert")).not.toHaveTextContent("OBJECT_KEY_MISSING")
     expect(screen.getByRole("alert")).not.toHaveTextContent("private/owner/board.png")
-    expect(screen.getByLabelText("PNG 또는 JPEG")).toBeDisabled()
+    expect(screen.getByLabelText("PNG 또는 JPEG 파일 선택")).toBeDisabled()
 
     fireEvent.click(screen.getByRole("button", { name: "배경 다시 불러오기" }))
 
     expect(await screen.findByRole("application", { name: "서명 보드 캔버스" })).toBeVisible()
-    expect(screen.getByLabelText("PNG 또는 JPEG")).toBeEnabled()
+    expect(screen.getByLabelText("PNG 또는 JPEG 파일 선택")).toBeEnabled()
   })
 
   it("Given the editor When controls render Then shared board button primitives are reused", async () => {
@@ -102,5 +108,16 @@ describe("BoardEditorRoute", () => {
     await screen.findByRole("application", { name: "서명 보드 캔버스" })
     await waitFor(() => expect(screen.getAllByRole("button").length).toBeGreaterThan(5))
     for (const button of screen.getAllByRole("button")) expect(button).toHaveClass("board-button")
+  })
+
+  it("Given active signing When editor controls render Then destructive extensions stay hidden", async () => {
+    renderEditor(
+      () => new Response(null, { status: 204 }),
+      "서명 진행",
+      <button className="board-button board-button--destructive" type="button">보드 영구 삭제</button>,
+    )
+
+    await screen.findByRole("application", { name: "서명 보드 캔버스" })
+    expect(screen.queryByRole("button", { name: "보드 영구 삭제" })).not.toBeInTheDocument()
   })
 })

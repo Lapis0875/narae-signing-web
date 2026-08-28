@@ -4,8 +4,14 @@ import { z } from "zod";
 import { apiRequest } from "../../../api/client.ts";
 import { ConfirmDialog } from "../../../components/ConfirmDialog.tsx";
 
-export function DeleteBoardAction() {
-  const { boardId = "missing" } = useParams();
+type DeleteBoardActionProps = {
+  readonly boardId?: string;
+  readonly onDeleted?: () => Promise<unknown>;
+};
+
+export function DeleteBoardAction({ boardId: providedBoardId, onDeleted }: DeleteBoardActionProps) {
+  const { boardId: routeBoardId = "missing" } = useParams();
+  const boardId = providedBoardId ?? routeBoardId;
   const navigate = useNavigate();
   const invokerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -20,7 +26,11 @@ export function DeleteBoardAction() {
         headers: { "Content-Type": "application/json" },
         method: "DELETE",
       });
-      navigate("/boards", { replace: true });
+      if (onDeleted === undefined) {
+        navigate("/boards", { replace: true });
+      } else {
+        await onDeleted();
+      }
     } finally {
       setDeleting(false);
     }
