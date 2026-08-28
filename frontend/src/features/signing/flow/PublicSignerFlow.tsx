@@ -8,6 +8,7 @@ import {
   type PublicLink,
   readPublicLink,
   readSigningSession,
+  type SignerIdentity,
 } from "./publicSignerApi.ts"
 import "./PublicSignerFlow.css"
 
@@ -22,6 +23,7 @@ export type SignerView =
   | { readonly kind: "identified"; readonly title: string }
   | {
       readonly kind: "drawing"
+      readonly identity: SignerIdentity
       readonly signatureAspectRatio?: number
       readonly title: string
     }
@@ -37,12 +39,13 @@ function identifyView(title: string, message = emptyMessage): SignerView {
 function viewFromSession(
   title: string,
   session: Awaited<ReturnType<typeof readSigningSession>>,
+  identity: SignerIdentity,
 ): SignerView {
   switch (session.state) {
     case "READY":
       return session.signatureAspectRatio === undefined
-        ? { kind: "drawing", title }
-        : { kind: "drawing", signatureAspectRatio: session.signatureAspectRatio, title }
+        ? { kind: "drawing", identity, title }
+        : { kind: "drawing", identity, signatureAspectRatio: session.signatureAspectRatio, title }
     case "SUBMITTED":
       return { kind: "complete", title }
     case "CLOSED":
@@ -94,21 +97,7 @@ export function PublicSignerFlow({ shareToken }: PublicSignerFlowProps) {
           setView({ kind: "invalid" })
           return
         }
-        try {
-          const session = await readSigningSession()
-          if (active) {
-            setView(viewFromSession(link.title, session))
-          }
-        } catch (error) {
-          if (!active) {
-            return
-          }
-          if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
-            setView(identifyView(link.title))
-            return
-          }
-          setView({ kind: "invalid" })
-        }
+        setView(identifyView(link.title))
       } catch (error) {
         if (active) {
           if (error instanceof ApiError && error.status === 403) {
@@ -148,11 +137,12 @@ export function PublicSignerFlow({ shareToken }: PublicSignerFlowProps) {
       return
     }
     const title = view.title
+    const identity = { organization, job, name }
     setView({ kind: "identified", title })
     try {
-      await identifySigner(shareToken, { organization, job, name })
+      await identifySigner(shareToken, identity)
       const session = await readSigningSession()
-      setView(viewFromSession(title, session))
+      setView(viewFromSession(title, session, identity))
     } catch {
       setView({
         kind: "identify",
@@ -191,8 +181,8 @@ export function PublicSignerFlow({ shareToken }: PublicSignerFlowProps) {
         if (error.code === "CONFLICT") {
           try {
             const session = await readSigningSession()
-            setView((current) => "title" in current
-              ? viewFromSession(current.title, session)
+            setView((current) => current.kind === "drawing"
+              ? viewFromSession(current.title, session, current.identity)
               : current)
             return session.state === "SUBMITTED"
           } catch (sessionError) {

@@ -181,10 +181,7 @@ describe("administrator board workflow", () => {
     // Given
     setViewport(1024)
     vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(new Response(JSON.stringify({ state: "OPEN", title: "서명하기" }), {
-        headers: { "Content-Type": "application/json" },
-      }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ state: "SUBMITTED" }), {
+      .mockResolvedValue(new Response(JSON.stringify({ state: "OPEN", title: "서명하기" }), {
         headers: { "Content-Type": "application/json" },
       }))
 
@@ -193,7 +190,8 @@ describe("administrator board workflow", () => {
 
     // Then
     expect(await screen.findByRole("heading", { name: "서명하기" })).toBeInTheDocument()
-    expect(screen.getByTestId("public-signer-complete")).toBeInTheDocument()
+    expect(screen.getByTestId("public-signer-identify")).toBeInTheDocument()
+    expect(screen.queryByTestId("public-signer-complete")).not.toBeInTheDocument()
     expect(screen.queryByTestId("signer-canvas")).not.toBeInTheDocument()
   })
 })

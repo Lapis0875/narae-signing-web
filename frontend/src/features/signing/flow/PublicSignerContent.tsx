@@ -91,6 +91,9 @@ export function PublicSignerContent({ identify, submit, view }: PublicSignerCont
       <section className="public-signer" data-testid="public-signer-drawing">
         <div className="app-panel route-panel public-signer__intro">
           <h1>{view.title}</h1>
+          <p className="public-signer__identity" data-testid="public-signer-identity">
+            서명자: {[view.identity.organization, view.identity.job, view.identity.name].filter((value) => value.length > 0).join(" · ")}
+          </p>
           <p>아래 영역에 서명한 뒤 제출해 주세요.</p>
           <p className="public-signer__retention" data-testid="retention-notice">
             입력한 정보와 서명은 이 행사 보드에 저장되며, 관리자가 보드를 삭제할 때까지 보관됩니다.

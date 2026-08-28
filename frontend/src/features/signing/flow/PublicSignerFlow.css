@@ -24,6 +24,12 @@
   width: 100%;
 }
 
+.public-signer__identity {
+  margin-block: var(--space-8) var(--space-0);
+  color: var(--color-ink-navy);
+  font-weight: var(--font-weight-semibold);
+}
+
 .public-signer__retention {
   margin-block-end: var(--space-0);
   padding: var(--space-16);
