@@ -18,6 +18,7 @@ import jakarta.servlet.http.Cookie;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Arrays;
@@ -41,6 +42,7 @@ class PublicIdentifyHttpTest {
     private static final UUID SLOT_ID = UUID.fromString("20000000-0000-0000-0000-000000000002");
     static final String TOKEN = token((byte) 7);
     private static final String OLD_TOKEN = token((byte) 8);
+    private static final Duration SIGNER_SESSION_MAXIMUM_LIFETIME = Duration.ofHours(2);
     private static final String EXACT_JSON = """
             {"organization":"소속","job":"직책","name":"이름"}
             """;
@@ -69,7 +71,10 @@ class PublicIdentifyHttpTest {
         var sessionFilter = new SessionRepositoryFilter<>(sessions);
         sessionFilter.setHttpSessionIdResolver(sessionIds);
         mvc = MockMvcBuilders.standaloneSetup(
-                        new PublicIdentifyController(service, new SessionCookieActions(sessionIds, csrf)))
+                        new PublicIdentifyController(
+                                service,
+                                new SessionCookieActions(sessionIds, csrf),
+                                SIGNER_SESSION_MAXIMUM_LIFETIME))
                 .setControllerAdvice(new PublicIdentifyAdvice())
                 .addFilters(new PublicTokenResponseFilter(), sessionFilter, new CsrfContractFilter(csrf))
                 .build();
@@ -116,7 +121,7 @@ class PublicIdentifyHttpTest {
         var sessionId = cookieValue(identified, "SIGNER_SESSION");
         var session = sessions.findById(sessionId);
         assertThat(session).isNotNull();
-        assertThat(session.getMaxInactiveInterval()).isEqualTo(java.time.Duration.ofMinutes(30));
+        assertThat(session.getMaxInactiveInterval()).isEqualTo(SIGNER_SESSION_MAXIMUM_LIFETIME);
         assertThat(session.getAttributeNames()).containsExactlyInAnyOrder(
                 "signer.boardId", "signer.slotId", "signer.shareLinkVersion",
                 "signer.slotRevision", "signer.signatureAspectRatio", "signer.issuedAt");

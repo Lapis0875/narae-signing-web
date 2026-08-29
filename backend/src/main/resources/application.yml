@@ -15,6 +15,7 @@ app:
   minio-secret-key: local-password
   master-key-file: ./local-only-master-key
   crypto-key-version: 1
+  signer-session-maximum-lifetime: ${APP_SIGNER_SESSION_MAXIMUM_LIFETIME:PT2H}
   trusted-frontend-ip: 127.0.0.1
 
 ---

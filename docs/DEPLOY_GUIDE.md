@@ -66,6 +66,7 @@ MINIO_ROOT_PASSWORD=<새로_생성한_긴_무작위_비밀번호>
 APP_MINIO_BUCKET=narae-signatures
 APP_PUBLIC_ORIGIN=https://<PUBLIC_DOMAIN>
 APP_CRYPTO_KEY_VERSION=1
+APP_SIGNER_SESSION_MAXIMUM_LIFETIME=PT2H
 NARAE_DATA_ROOT=/srv/narae-signing
 FRONTEND_PORT=8080
 ```
@@ -85,6 +86,7 @@ openssl rand -base64 36
 | `APP_MINIO_BUCKET`                       | 서명 파일을 둘 버킷 이름을 정한다. 예: `narae-signatures`.                                                                   |
 | `APP_PUBLIC_ORIGIN`                      | 사용자가 실제로 접속할 **정확한 HTTPS 주소**다. 예: `https://signing.example.com`. 프록시 내부 HTTP 주소나 `http://localhost`를 넣지 않는다. |
 | `APP_CRYPTO_KEY_VERSION`                 | 새 환경은 `1`로 시작한다. 같은 데이터 루트에서는 키 교체 절차 없이 값을 바꾸지 않는다.                                                          |
+| `APP_SIGNER_SESSION_MAXIMUM_LIFETIME`    | 공개 서명 세션의 최대·유휴 유지 시간이다. 기본값은 `PT2H`(2시간)이며, 양수 기간을 입력한다.                                                       |
 | `NARAE_DATA_ROOT`                        | PostgreSQL, MinIO, master key를 보관할 절대 경로다. 위에서 만든 경로와 같아야 한다.                                                 |
 | `FRONTEND_PORT`                          | 앱 호스트에서 frontend만 열 포트다. 기본값은 `8080`이다.                                                                       |
 

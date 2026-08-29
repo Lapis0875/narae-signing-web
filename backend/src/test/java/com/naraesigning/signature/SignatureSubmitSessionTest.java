@@ -11,12 +11,13 @@ import org.junit.jupiter.api.Test;
 
 class SignatureSubmitSessionTest {
     private static final Instant NOW = Instant.parse("2026-08-21T00:30:00Z");
+    private static final int SIGNER_SESSION_MAXIMUM_LIFETIME_SECONDS = 7_200;
 
     @Test
     void requiresBothAbsoluteAndIdleSessionLifetimes() {
         // Given
-        var absoluteExpired = session(NOW.minusSeconds(1_801), NOW.minusSeconds(60));
-        var idleExpired = session(NOW.minusSeconds(60), NOW.minusSeconds(1_801));
+        var absoluteExpired = session(NOW.minusSeconds(7_201), NOW.minusSeconds(60));
+        var idleExpired = session(NOW.minusSeconds(60), NOW.minusSeconds(7_201));
         var current = session(NOW.minusSeconds(60), NOW.minusSeconds(60));
 
         // When / Then
@@ -34,7 +35,7 @@ class SignatureSubmitSessionTest {
         when(session.getAttribute("signer.signatureAspectRatio")).thenReturn(1.5);
         when(session.getAttribute("signer.issuedAt")).thenReturn(issuedAt);
         when(session.getLastAccessedTime()).thenReturn(accessedAt.toEpochMilli());
-        when(session.getMaxInactiveInterval()).thenReturn(1_800);
+        when(session.getMaxInactiveInterval()).thenReturn(SIGNER_SESSION_MAXIMUM_LIFETIME_SECONDS);
         return session;
     }
 }

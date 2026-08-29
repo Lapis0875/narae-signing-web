@@ -15,6 +15,7 @@ import com.naraesigning.session.SessionCookieActions;
 import jakarta.servlet.Filter;
 import jakarta.servlet.http.Cookie;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Map;
@@ -44,7 +45,10 @@ class PublicIdentifyTrustedProxyHttpTest {
         var csrf = new CsrfTokenContract();
         var sessionIds = new PathAwareSessionIdResolver();
         mvc = MockMvcBuilders.standaloneSetup(
-                        new PublicIdentifyController(service, new SessionCookieActions(sessionIds, csrf)))
+                        new PublicIdentifyController(
+                                service,
+                                new SessionCookieActions(sessionIds, csrf),
+                                Duration.ofHours(2)))
                 .setControllerAdvice(new PublicIdentifyAdvice())
                 .addFilters(new PublicTokenResponseFilter(), trustedProxyFilter(), new CsrfContractFilter(csrf))
                 .build();

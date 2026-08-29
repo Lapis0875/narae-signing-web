@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.naraesigning.crypto.VersionedCryptoService;
 import com.naraesigning.session.SignerSessionContract;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Map;
@@ -25,6 +26,7 @@ class SignatureSubmitHttpTest {
     private static final UUID SLOT_ID = UUID.fromString("20000000-0000-0000-0000-000000000002");
     private static final UUID ROSTER_ID = UUID.fromString("30000000-0000-0000-0000-000000000003");
     private static final Instant NOW = Instant.now();
+    private static final Duration SIGNER_SESSION_MAXIMUM_LIFETIME = Duration.ofHours(2);
     private TrackingRepository repository;
     private MockMvc mvc;
 
@@ -110,7 +112,7 @@ class SignatureSubmitHttpTest {
     private static MockHttpSession currentSession() {
         var session = new MockHttpSession();
         SignerSessionContract.issue(session, new SignerSessionContract.Value(
-                BOARD_ID, SLOT_ID, 3, 11, 1.5, NOW.minusSeconds(60)));
+                BOARD_ID, SLOT_ID, 3, 11, 1.5, NOW.minusSeconds(60)), SIGNER_SESSION_MAXIMUM_LIFETIME);
         return session;
     }
 

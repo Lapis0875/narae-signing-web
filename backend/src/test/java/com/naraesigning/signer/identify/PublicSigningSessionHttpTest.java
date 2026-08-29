@@ -13,6 +13,7 @@ import com.naraesigning.session.SessionCookieActions;
 import com.naraesigning.session.SignerSessionContract;
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Optional;
@@ -27,6 +28,7 @@ class PublicSigningSessionHttpTest {
     private static final UUID BOARD_ID = UUID.fromString("10000000-0000-0000-0000-000000000001");
     private static final UUID SLOT_ID = UUID.fromString("20000000-0000-0000-0000-000000000002");
     private static final Instant NOW = Instant.parse("2026-08-21T00:10:00Z");
+    private static final Duration SIGNER_SESSION_MAXIMUM_LIFETIME = Duration.ofHours(2);
     private HttpSessionRepository repository;
     private MockMvc mvc;
 
@@ -97,14 +99,14 @@ class PublicSigningSessionHttpTest {
     private static MockHttpSession currentSession() {
         var session = new MockHttpSession();
         SignerSessionContract.issue(session, new SignerSessionContract.Value(
-                BOARD_ID, SLOT_ID, 3, 11, 1.5, NOW.minusSeconds(60)));
+                BOARD_ID, SLOT_ID, 3, 11, 1.5, NOW.minusSeconds(60)), SIGNER_SESSION_MAXIMUM_LIFETIME);
         return session;
     }
 
     private static MockHttpSession expiredSession() {
         var session = new MockHttpSession();
         SignerSessionContract.issue(session, new SignerSessionContract.Value(
-                BOARD_ID, SLOT_ID, 3, 11, 1.5, NOW.minusSeconds(1_801)));
+                BOARD_ID, SLOT_ID, 3, 11, 1.5, NOW.minusSeconds(7_201)), SIGNER_SESSION_MAXIMUM_LIFETIME);
         return session;
     }
 

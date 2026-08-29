@@ -5,6 +5,8 @@ import com.naraesigning.session.SessionCookieActions;
 import com.naraesigning.session.SignerSessionContract;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.time.Duration;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -19,10 +21,15 @@ import org.springframework.web.bind.annotation.RestController;
 final class PublicIdentifyController {
     private final PublicIdentifyService identify;
     private final SessionCookieActions cookies;
+    private final Duration signerSessionMaximumLifetime;
 
-    PublicIdentifyController(PublicIdentifyService identify, SessionCookieActions cookies) {
+    PublicIdentifyController(
+            PublicIdentifyService identify,
+            SessionCookieActions cookies,
+            @Value("${app.signer-session-maximum-lifetime}") Duration signerSessionMaximumLifetime) {
         this.identify = identify;
         this.cookies = cookies;
+        this.signerSessionMaximumLifetime = signerSessionMaximumLifetime;
     }
 
     @GetMapping("/{shareToken}")
@@ -38,7 +45,7 @@ final class PublicIdentifyController {
             HttpServletResponse response) {
         var value = identify.identify(shareToken, clientIp(request), body);
         cookies.signerIdentified(request, response);
-        SignerSessionContract.issue(request.getSession(false), value);
+        SignerSessionContract.issue(request.getSession(false), value, signerSessionMaximumLifetime);
         return new IdentifyResponse(true);
     }
 

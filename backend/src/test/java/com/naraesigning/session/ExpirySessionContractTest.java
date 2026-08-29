@@ -2,6 +2,7 @@ package com.naraesigning.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
@@ -10,6 +11,7 @@ import org.springframework.mock.web.MockHttpSession;
 
 class ExpirySessionContractTest {
     private static final Instant ISSUED_AT = Instant.parse("2026-08-20T00:00:00Z");
+    private static final Duration SIGNER_SESSION_MAXIMUM_LIFETIME = Duration.ofHours(2);
 
     @Test
     void adminExpiresAtAbsoluteTwelveHourBoundaryDespiteActivity() {
@@ -24,18 +26,18 @@ class ExpirySessionContractTest {
     }
 
     @Test
-    void signerExpiresAtThirtyMinuteBoundary() {
+    void signerExpiresAtConfiguredTwoHourBoundary() {
         // Given
         var session = new MockHttpSession();
         session.setAttribute("identity", "must-be-removed");
         session.setAttribute("coordinates", "must-be-removed");
         var signer = fixture();
-        SignerSessionContract.issue(session, signer);
+        SignerSessionContract.issue(session, signer, SIGNER_SESSION_MAXIMUM_LIFETIME);
 
         // When / Then
-        assertThat(SignerSessionContract.isCurrent(session, ISSUED_AT.plusSeconds(1_799))).isTrue();
-        assertThat(SignerSessionContract.isCurrent(session, ISSUED_AT.plusSeconds(1_800))).isFalse();
-        assertThat(session.getMaxInactiveInterval()).isEqualTo(1_800);
+        assertThat(SignerSessionContract.isCurrent(session, ISSUED_AT.plusSeconds(7_199))).isTrue();
+        assertThat(SignerSessionContract.isCurrent(session, ISSUED_AT.plusSeconds(7_200))).isFalse();
+        assertThat(session.getMaxInactiveInterval()).isEqualTo(7_200);
     }
 
     @Test
@@ -46,7 +48,7 @@ class ExpirySessionContractTest {
         session.setAttribute("coordinates", "must-be-removed");
 
         // When
-        SignerSessionContract.issue(session, fixture());
+        SignerSessionContract.issue(session, fixture(), SIGNER_SESSION_MAXIMUM_LIFETIME);
 
         // Then
         assertThat(session.getAttributeNames().asIterator())

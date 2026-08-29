@@ -6,7 +6,6 @@ import java.time.Instant;
 import java.util.UUID;
 
 public final class SignerSessionContract {
-    public static final Duration MAXIMUM_LIFETIME = Duration.ofMinutes(30);
     private static final String BOARD_ID = "signer.boardId";
     private static final String SLOT_ID = "signer.slotId";
     private static final String LINK_VERSION = "signer.shareLinkVersion";
@@ -16,7 +15,14 @@ public final class SignerSessionContract {
 
     private SignerSessionContract() {}
 
-    public static void issue(HttpSession session, Value value) {
+    public static void issue(HttpSession session, Value value, Duration maximumLifetime) {
+        if (maximumLifetime == null || maximumLifetime.isNegative() || maximumLifetime.isZero()) {
+            throw new IllegalArgumentException("Signer session lifetime must be positive");
+        }
+        var maximumLifetimeSeconds = Math.toIntExact(maximumLifetime.toSeconds());
+        if (maximumLifetimeSeconds < 1) {
+            throw new IllegalArgumentException("Signer session lifetime must be at least one second");
+        }
         session.getAttributeNames().asIterator().forEachRemaining(session::removeAttribute);
         session.setAttribute(BOARD_ID, value.boardId());
         session.setAttribute(SLOT_ID, value.slotId());
@@ -24,12 +30,15 @@ public final class SignerSessionContract {
         session.setAttribute(SLOT_REVISION, value.slotRevision());
         session.setAttribute(ASPECT, value.signatureAspectRatio());
         session.setAttribute(ISSUED_AT, value.issuedAt());
-        session.setMaxInactiveInterval(Math.toIntExact(MAXIMUM_LIFETIME.toSeconds()));
+        session.setMaxInactiveInterval(maximumLifetimeSeconds);
     }
 
     public static boolean isCurrent(HttpSession session, Instant now) {
         var issuedAt = (Instant) session.getAttribute(ISSUED_AT);
-        return issuedAt != null && now.isBefore(issuedAt.plus(MAXIMUM_LIFETIME));
+        var maximumLifetimeSeconds = session.getMaxInactiveInterval();
+        return issuedAt != null
+                && maximumLifetimeSeconds > 0
+                && now.isBefore(issuedAt.plusSeconds(maximumLifetimeSeconds));
     }
 
     public static State validate(Value signer, CurrentState current) {
