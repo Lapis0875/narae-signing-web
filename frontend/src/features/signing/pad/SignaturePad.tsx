@@ -19,6 +19,9 @@ import {
 import "./SignaturePad.css";
 
 type SignaturePadProps = {
+  readonly onCancel?: () => Promise<boolean>;
+  readonly onClearDraft?: () => Promise<boolean>;
+  readonly onDraft?: (payload: SignaturePayload) => Promise<boolean>;
   readonly onSubmit: (payload: SignaturePayload) => Promise<boolean>;
 };
 
@@ -27,12 +30,23 @@ type ActiveStroke = {
   readonly points: SignaturePoint[];
 };
 
-export function SignaturePad({ onSubmit }: SignaturePadProps) {
+export function SignaturePad({
+  onCancel,
+  onClearDraft,
+  onDraft,
+  onSubmit,
+}: SignaturePadProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const strokesRef = useRef<SignatureStroke[]>([]);
   const activeStrokeRef = useRef<ActiveStroke | null>(null);
   const pointCountRef = useRef(0);
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftRequestRef = useRef<Promise<void> | null>(null);
+  const draftSendingRef = useRef(false);
+  const draftQueuedRef = useRef(false);
+  const draftStoppingRef = useRef(false);
   const [revision, setRevision] = useState(0);
+  const [clearing, setClearing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState("");
 
@@ -95,6 +109,85 @@ export function SignaturePad({ onSubmit }: SignaturePadProps) {
     };
   }, [redraw]);
 
+  const draftPayload = useCallback((): SignaturePayload | null => {
+    const activeStroke = activeStrokeRef.current;
+    const strokes = activeStroke === null || activeStroke.points.length === 0
+      ? strokesRef.current
+      : [...strokesRef.current, { points: [...activeStroke.points] }];
+    return createPayload(strokes);
+  }, []);
+
+  const publishDraft = useCallback(() => {
+    if (onDraft === undefined || submitting || draftStoppingRef.current) {
+      return;
+    }
+    if (draftSendingRef.current) {
+      draftQueuedRef.current = true;
+      return;
+    }
+    const payload = draftPayload();
+    if (payload === null || payload.strokes.length === 0) {
+      return;
+    }
+    draftSendingRef.current = true;
+    const request = Promise.resolve()
+      .then(() => onDraft(payload))
+      .then(
+        (saved) => {
+          if (!saved) {
+            setStatus("서명 진행 상태를 동기화하지 못했습니다.");
+          }
+        },
+        () => setStatus("서명 진행 상태를 동기화하지 못했습니다."),
+      )
+      .then(() => {
+        draftSendingRef.current = false;
+        if (draftQueuedRef.current) {
+          draftQueuedRef.current = false;
+          queueMicrotask(publishDraft);
+        }
+      });
+    draftRequestRef.current = request;
+    void request;
+  }, [draftPayload, onDraft, submitting]);
+
+  const scheduleDraft = useCallback((delay = 300) => {
+    if (onDraft === undefined) {
+      return;
+    }
+    if (draftTimerRef.current !== null) {
+      clearTimeout(draftTimerRef.current);
+    }
+    draftTimerRef.current = setTimeout(() => {
+      draftTimerRef.current = null;
+      publishDraft();
+    }, delay);
+  }, [onDraft, publishDraft]);
+
+  useEffect(() => () => {
+    if (draftTimerRef.current !== null) {
+      clearTimeout(draftTimerRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (onDraft === undefined) {
+      return;
+    }
+    const heartbeat = setInterval(publishDraft, 20_000);
+    return () => clearInterval(heartbeat);
+  }, [onDraft, publishDraft]);
+
+  const stopDraftSync = useCallback(async () => {
+    draftStoppingRef.current = true;
+    if (draftTimerRef.current !== null) {
+      clearTimeout(draftTimerRef.current);
+      draftTimerRef.current = null;
+    }
+    draftQueuedRef.current = false;
+    await draftRequestRef.current;
+  }, []);
+
   const appendEventPoint = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const activeStroke = activeStrokeRef.current;
     if (pointCountRef.current >= MAX_POINTS) {
@@ -111,6 +204,7 @@ export function SignaturePad({ onSubmit }: SignaturePadProps) {
     if (appendPoint(activeStroke.points, point)) {
       pointCountRef.current += 1;
       redraw();
+      scheduleDraft();
     }
   };
 
@@ -122,6 +216,7 @@ export function SignaturePad({ onSubmit }: SignaturePadProps) {
     pointCountRef.current -= activeStroke.points.length;
     activeStrokeRef.current = null;
     redraw();
+    scheduleDraft(0);
   };
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -134,6 +229,7 @@ export function SignaturePad({ onSubmit }: SignaturePadProps) {
     }
     if (
       submitting ||
+      clearing ||
       !event.isPrimary ||
       event.button !== 0 ||
       activeStrokeRef.current !== null
@@ -159,6 +255,7 @@ export function SignaturePad({ onSubmit }: SignaturePadProps) {
     }
     setRevision((value) => value + 1);
     redraw();
+    scheduleDraft(0);
   };
 
   const clearStrokes = () => {
@@ -171,7 +268,41 @@ export function SignaturePad({ onSubmit }: SignaturePadProps) {
 
   const clearByUser = () => {
     clearStrokes();
-    setStatus("서명을 모두 지웠습니다.");
+    if (onClearDraft === undefined) {
+      setStatus("서명을 모두 지웠습니다.");
+      return;
+    }
+    setClearing(true);
+    void Promise.resolve().then(async () => {
+      await stopDraftSync();
+      return onClearDraft();
+    }).then(
+      (cleared) => setStatus(cleared ? "서명을 모두 지웠습니다." : "서명을 지우지 못했습니다."),
+      () => setStatus("서명을 지우지 못했습니다."),
+    ).finally(() => {
+      draftStoppingRef.current = false;
+      setClearing(false);
+    });
+  };
+
+  const cancelSigning = () => {
+    if (onCancel === undefined || submitting || clearing) {
+      return;
+    }
+    clearStrokes();
+    setClearing(true);
+    void Promise.resolve().then(async () => {
+      await stopDraftSync();
+      return onCancel();
+    }).then(
+      (cancelled) => {
+        if (!cancelled) setStatus("서명을 취소하지 못했습니다.");
+      },
+      () => setStatus("서명을 취소하지 못했습니다."),
+    ).finally(() => {
+      draftStoppingRef.current = false;
+      setClearing(false);
+    });
   };
 
   const submit = async () => {
@@ -217,9 +348,19 @@ export function SignaturePad({ onSubmit }: SignaturePadProps) {
         className="signature-pad__canvas"
       />
       <div className="signature-pad__controls">
+        {onCancel === undefined ? null : (
+          <button
+            className="app-primary-button signature-pad__action"
+            disabled={submitting || clearing}
+            onClick={cancelSigning}
+            type="button"
+          >
+            서명 취소
+          </button>
+        )}
         <button
           className="app-primary-button signature-pad__action"
-          disabled={strokesRef.current.length === 0 || submitting}
+          disabled={strokesRef.current.length === 0 || submitting || clearing}
           onClick={clearByUser}
           type="button"
         >
@@ -227,7 +368,7 @@ export function SignaturePad({ onSubmit }: SignaturePadProps) {
         </button>
         <button
           className="app-primary-button signature-pad__action"
-          disabled={strokesRef.current.length === 0 || submitting}
+          disabled={strokesRef.current.length === 0 || submitting || clearing}
           onClick={submit}
           type="button"
         >

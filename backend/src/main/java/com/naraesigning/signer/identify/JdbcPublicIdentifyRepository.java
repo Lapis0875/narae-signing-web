@@ -33,7 +33,8 @@ final class JdbcPublicIdentifyRepository implements PublicIdentifyRepository {
         return Optional.ofNullable(jdbc.query("""
                 select b.id board_id, b.status board_status, b.share_link_version,
                        b.canvas_width, b.canvas_height, r.submitted,
-                       s.id slot_id, s.placement_status, s.slot_revision, s.width, s.height
+                       s.id slot_id, s.placement_status, s.slot_revision, s.width, s.height,
+                       s.active_signer_claim, s.active_signer_claim_expires_at
                 from board b
                 join roster_entry r on r.board_id = b.id
                 join signature_slot s on s.roster_entry_id = r.id
@@ -48,7 +49,8 @@ final class JdbcPublicIdentifyRepository implements PublicIdentifyRepository {
         return Optional.ofNullable(jdbc.query("""
                 select b.id board_id, b.status board_status, b.share_link_version,
                        b.canvas_width, b.canvas_height, r.submitted,
-                       s.id slot_id, s.placement_status, s.slot_revision, s.width, s.height
+                       s.id slot_id, s.placement_status, s.slot_revision, s.width, s.height,
+                       s.active_signer_claim, s.active_signer_claim_expires_at
                 from board b
                 join roster_entry r on r.board_id = b.id
                 join signature_slot s on s.roster_entry_id = r.id
@@ -69,6 +71,9 @@ final class JdbcPublicIdentifyRepository implements PublicIdentifyRepository {
                 resultSet.getBigDecimal("width"),
                 resultSet.getBigDecimal("height"),
                 resultSet.getInt("canvas_width"),
-                resultSet.getInt("canvas_height"));
+                resultSet.getInt("canvas_height"),
+                resultSet.getObject("active_signer_claim", UUID.class),
+                resultSet.getTimestamp("active_signer_claim_expires_at") == null
+                        ? null : resultSet.getTimestamp("active_signer_claim_expires_at").toInstant());
     }
 }

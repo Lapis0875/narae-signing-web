@@ -87,13 +87,16 @@ public final class RequestCorrelationFilter extends OncePerRequestFilter {
         var path = request.getRequestURI();
         if (path.matches("/api/v1/auth/(csrf|login|logout|session)")
                 || path.equals("/api/v1/admin/boards")
-                || path.equals("/api/v1/public/signing-session/signature")) {
+                || path.matches("/api/v1/public/signing-session/(signature|draft(?:/clear)?|cancel)")) {
             return path;
         }
         if (path.matches("/api/v1/public/links/[^/]+(?:/identify)?")) {
             return path.endsWith("/identify")
                     ? "/api/v1/public/links/{token}/identify"
                     : "/api/v1/public/links/{token}";
+        }
+        if (path.matches("/api/v1/public/links/[^/]+/display/(snapshot|background|events)")) {
+            return path.replaceFirst("^(/api/v1/public/links/)[^/]+", "$1{token}");
         }
         var normalized = path
                 .replaceFirst("^(/api/v1/admin/boards/)" + UUID_PART, "$1{boardId}")

@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react"
 import { ApiError } from "../../../api/errors.ts"
+import { cancelSignatureDraft, clearSignatureDraft, updateSignatureDraft } from "../api/signatureDraftApi.ts"
 import { submitSignature } from "../api/signatureSubmitApi.ts"
 import type { SignaturePayload } from "../pad/signaturePayload.ts"
 import { PublicSignerContent } from "./PublicSignerContent.tsx"
@@ -19,6 +20,7 @@ export type SignerView =
   | { readonly kind: "setup"; readonly title: string }
   | { readonly kind: "invalid" }
   | { readonly kind: "closed"; readonly title: string }
+  | { readonly kind: "busy"; readonly title: string }
   | { readonly kind: "identify"; readonly message: string; readonly title: string }
   | { readonly kind: "identified"; readonly title: string }
   | {
@@ -50,6 +52,8 @@ function viewFromSession(
       return { kind: "complete", title }
     case "CLOSED":
       return { kind: "closed", title }
+    case "BUSY":
+      return { kind: "busy", title }
     case "STALE":
       return identifyView(title, reidentifyMessage)
     case "INVALID":
@@ -204,5 +208,47 @@ export function PublicSignerFlow({ shareToken }: PublicSignerFlowProps) {
     }
   }
 
-  return <PublicSignerContent identify={identify} submit={submit} view={view} />
+  const draft = async (payload: SignaturePayload): Promise<boolean> => {
+    try {
+      await updateSignatureDraft(payload)
+      return true
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        try {
+          const session = await readSigningSession()
+          setView((current) => current.kind === "drawing"
+            ? viewFromSession(current.title, session, current.identity)
+            : current)
+        } catch {
+          setView((current) => "title" in current
+            ? identifyView(current.title, reidentifyMessage)
+            : current)
+        }
+      }
+      return false
+    }
+  }
+
+  const clearDraft = async (): Promise<boolean> => {
+    try {
+      await clearSignatureDraft()
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  const cancel = async (): Promise<boolean> => {
+    try {
+      await cancelSignatureDraft()
+      setView((current) => current.kind === "drawing"
+        ? identifyView(current.title, "서명을 취소했습니다.")
+        : current)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  return <PublicSignerContent cancel={cancel} clearDraft={clearDraft} draft={draft} identify={identify} submit={submit} view={view} />
 }

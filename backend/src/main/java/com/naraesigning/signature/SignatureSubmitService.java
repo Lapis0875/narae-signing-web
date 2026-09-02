@@ -3,6 +3,7 @@ package com.naraesigning.signature;
 import com.naraesigning.crypto.CryptoContext;
 import com.naraesigning.crypto.VersionedCryptoService;
 import java.time.Instant;
+import java.util.UUID;
 
 final class SignatureSubmitService {
     private final SignatureSubmissionRepository repository;
@@ -19,10 +20,15 @@ final class SignatureSubmitService {
     }
 
     void submit(SignatureSession session, SignaturePayload payload, Instant now) {
+        submit(session, payload, null, now);
+    }
+
+    void submit(SignatureSession session, SignaturePayload payload, UUID claimId, Instant now) {
         if (!session.active()) throw SignatureSubmitException.sessionExpired();
         var signer = session.value();
         repository.withBoardThenSlotLocked(signer.boardId(), signer.slotId(), (state, writer) -> {
             validate(signer, state);
+            validateClaim(state, claimId, now);
             var encrypted = crypto.encrypt(payload.canonicalBytes(),
                     CryptoContext.field("signature-slot", signer.slotId().toString(), "strokes"));
             writer.save(encrypted, now);
@@ -31,7 +37,7 @@ final class SignatureSubmitService {
         });
     }
 
-    private static void validate(
+    static void validate(
             com.naraesigning.session.SignerSessionContract.Value signer,
             SignatureSubmissionRepository.LockedState state) {
         var metadataCount = (state.ciphertextPresent() ? 1 : 0)
@@ -53,6 +59,18 @@ final class SignatureSubmitService {
                 || Double.compare(signer.signatureAspectRatio(), state.aspect()) != 0
                 || !"PLACED".equals(state.placementStatus())) {
             throw SignatureSubmitException.stale();
+        }
+    }
+
+    static void validateClaim(
+            SignatureSubmissionRepository.LockedState state, UUID claimId, Instant now) {
+        var activeClaim = state.activeSignerClaim();
+        var expiresAt = state.activeSignerClaimExpiresAt();
+        if ((activeClaim == null) != (expiresAt == null)) {
+            throw SignatureSubmitException.invalidState();
+        }
+        if (activeClaim != null && expiresAt.isAfter(now) && !activeClaim.equals(claimId)) {
+            throw SignatureSubmitException.inProgress();
         }
     }
 }

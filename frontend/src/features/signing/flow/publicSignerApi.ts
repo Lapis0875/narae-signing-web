@@ -17,7 +17,7 @@ const publicLinkSchema = z.union([
 const identifyResponseSchema = z.object({ identified: z.literal(true) })
 const signingSessionSchema = z.object({
   signatureAspectRatio: z.number().finite().positive().max(1000).optional(),
-  state: z.enum(["READY", "SUBMITTED", "CLOSED", "STALE", "INVALID"]),
+  state: z.enum(["READY", "SUBMITTED", "CLOSED", "BUSY", "STALE", "INVALID"]),
 })
 
 export type PublicLink = z.infer<typeof publicLinkSchema>

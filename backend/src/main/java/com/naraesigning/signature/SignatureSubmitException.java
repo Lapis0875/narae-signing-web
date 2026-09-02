@@ -32,6 +32,10 @@ final class SignatureSubmitException extends RuntimeException {
         return new SignatureSubmitException("signature_already_submitted", 409, false);
     }
 
+    static SignatureSubmitException inProgress() {
+        return new SignatureSubmitException("signature_in_progress", 409, false);
+    }
+
     static SignatureSubmitException invalidState() {
         return new SignatureSubmitException("signature_state_invalid", 409, true);
     }

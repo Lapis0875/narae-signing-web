@@ -1,6 +1,7 @@
 package com.naraesigning.signature;
 
 import com.naraesigning.crypto.VersionedCryptoService;
+import com.naraesigning.realtime.LiveSignatureRegistry;
 import java.time.Clock;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.ApplicationEventPublisher;
@@ -34,5 +35,11 @@ class SignatureSubmitConfiguration {
             VersionedCryptoService crypto,
             SignatureSubmissionEvents events) {
         return new SignatureSubmitService(repository, crypto, events);
+    }
+
+    @Bean
+    LiveSignatureService liveSignatureService(
+            SignatureSubmissionRepository repository, LiveSignatureRegistry drafts) {
+        return new LiveSignatureService(repository, drafts);
     }
 }

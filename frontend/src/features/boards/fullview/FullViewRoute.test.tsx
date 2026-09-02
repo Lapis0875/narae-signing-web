@@ -49,6 +49,7 @@ it("renders a snapshot slot with the lowercase API background contract", async (
       canvasWidth: 800,
       slots: [{
         background: "transparent",
+        draftSignature: null,
         height: 0.2,
         id: "00000000-0000-4000-8000-000000000002",
         signature: null,

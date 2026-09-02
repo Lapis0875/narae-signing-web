@@ -8,15 +8,21 @@ const EVENT_TYPES = [
   "layout-updated",
   "signature-reset",
   "signature-submitted",
+  "signature-draft",
+  "signature-draft-cleared",
 ] as const
 
 export function reconnectDelay(attempt: number): number {
   return Math.min(4_000, 250 * 2 ** attempt)
 }
 
-export function useBoardRealtime(boardId: string, refetchSnapshot: () => Promise<unknown>): void {
+function useRealtime(
+  eventUrl: string,
+  refetchSnapshot: () => Promise<unknown>,
+  enabled = true,
+): void {
   useEffect(() => {
-    if (typeof EventSource === "undefined") return
+    if (!enabled || typeof EventSource === "undefined") return
     let active = true
     let attempt = 0
     let source: EventSource | null = null
@@ -50,7 +56,7 @@ export function useBoardRealtime(boardId: string, refetchSnapshot: () => Promise
     }
     const connect = () => {
       if (!active) return
-      source = new EventSource(`/api/v1/admin/boards/${boardId}/events`)
+      source = new EventSource(eventUrl)
       source.onopen = () => { attempt = 0; refetch() }
       for (const type of EVENT_TYPES) source.addEventListener(type, refetch)
       source.onerror = () => {
@@ -67,5 +73,21 @@ export function useBoardRealtime(boardId: string, refetchSnapshot: () => Promise
       source?.close()
       if (reconnectTimer !== null) clearTimeout(reconnectTimer)
     }
-  }, [boardId, refetchSnapshot])
+  }, [enabled, eventUrl, refetchSnapshot])
+}
+
+export function useBoardRealtime(boardId: string, refetchSnapshot: () => Promise<unknown>): void {
+  useRealtime(`/api/v1/admin/boards/${boardId}/events`, refetchSnapshot)
+}
+
+export function usePublicBoardRealtime(
+  shareToken: string,
+  refetchSnapshot: () => Promise<unknown>,
+  enabled: boolean,
+): void {
+  useRealtime(
+    `/api/v1/public/links/${encodeURIComponent(shareToken)}/display/events`,
+    refetchSnapshot,
+    enabled,
+  )
 }

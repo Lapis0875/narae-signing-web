@@ -9,6 +9,7 @@ const signatureSchema = z.strictObject({
 })
 const slotSchema = z.strictObject({
   background: z.enum(["transparent", "white"]),
+  draftSignature: signatureSchema.nullable(),
   height: z.number().positive(),
   id: z.uuid(),
   signature: signatureSchema.nullable(),
@@ -16,7 +17,7 @@ const slotSchema = z.strictObject({
   x: z.number().min(0),
   y: z.number().min(0),
 })
-const snapshotSchema = z.strictObject({
+export const fullViewSnapshotSchema = z.strictObject({
   backgroundPresent: z.boolean(),
   boardId: z.uuid(),
   canvasHeight: z.number().int().positive(),
@@ -24,11 +25,11 @@ const snapshotSchema = z.strictObject({
   slots: z.array(slotSchema),
 })
 
-export type FullViewSnapshot = z.infer<typeof snapshotSchema>
+export type FullViewSnapshot = z.infer<typeof fullViewSnapshotSchema>
 export type FullViewSlot = z.infer<typeof slotSchema>
 
 export async function fetchFullViewSnapshot(boardId: string): Promise<FullViewSnapshot> {
-  return snapshotSchema.parse(await apiRequest(`/api/v1/admin/boards/${z.uuid().parse(boardId)}/snapshot`))
+  return fullViewSnapshotSchema.parse(await apiRequest(`/api/v1/admin/boards/${z.uuid().parse(boardId)}/snapshot`))
 }
 
 export async function fetchFullViewBackground(boardId: string): Promise<Blob | null> {

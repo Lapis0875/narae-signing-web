@@ -72,8 +72,8 @@ final class BoardRealtimeHttpTest {
 
         // Then
         assertThat(result.getResponse().getContentAsString())
-                .contains("id:1", "event:signature-submitted")
-                .doesNotContain("data:", "boardId", BOARD.toString());
+                .contains(":connected", "id:1", "event:signature-submitted", "data:{}")
+                .doesNotContain("boardId", BOARD.toString());
         assertThat(count()).isOne();
     }
 

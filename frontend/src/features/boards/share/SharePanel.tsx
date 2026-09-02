@@ -14,6 +14,7 @@ export function SharePanel({ disabled, onReissue, share }: SharePanelProps) {
   const [confirming, setConfirming] = useState(false)
   const [copyFailed, setCopyFailed] = useState(false)
   const shareUrl = new URL(`/sign/${encodeURIComponent(share.shareToken)}`, window.location.origin).toString()
+  const displayUrl = new URL(`/display/${encodeURIComponent(share.shareToken)}`, window.location.origin).toString()
   const qr = encodeQR(shareUrl, "raw", { ecc: "medium" })
   const qrSize = qr.length
   const qrPath = qr.flatMap((row, y) => row.map((filled, x) => filled ? `M${x} ${y}h1v1h-1z` : "")).join("")
@@ -34,6 +35,7 @@ export function SharePanel({ disabled, onReissue, share }: SharePanelProps) {
         <path className="editor-qr-module" d={qrPath} />
       </svg>
       <div className="editor-actions">
+        <a className="board-button" href={displayUrl} rel="noopener noreferrer" target="_blank">행사장 화면 열기</a>
         <button className="board-button" onClick={() => {
           setCopyFailed(false)
           void navigator.clipboard.writeText(shareUrl).catch(() => setCopyFailed(true))

@@ -6,6 +6,9 @@ import type { SignaturePayload } from "../pad/signaturePayload.ts"
 import type { SignerView } from "./PublicSignerFlow.tsx"
 
 type PublicSignerContentProps = {
+  readonly cancel: () => Promise<boolean>
+  readonly clearDraft: () => Promise<boolean>
+  readonly draft: (payload: SignaturePayload) => Promise<boolean>
   readonly identify: (event: FormEvent<HTMLFormElement>) => void
   readonly submit: (payload: SignaturePayload) => Promise<boolean>
   readonly view: SignerView
@@ -19,7 +22,7 @@ function signatureAspectStyle(ratio: number): SignatureAspectStyle {
   return { "--public-signer-signature-aspect": ratio }
 }
 
-export function PublicSignerContent({ identify, submit, view }: PublicSignerContentProps) {
+export function PublicSignerContent({ cancel, clearDraft, draft, identify, submit, view }: PublicSignerContentProps) {
   if (view.kind === "loading") {
     return <LoadingView />
   }
@@ -47,6 +50,13 @@ export function PublicSignerContent({ identify, submit, view }: PublicSignerCont
     return (
       <StatePanel testId="public-signer-closed" title={view.title}>
         서명이 마감되었습니다.
+      </StatePanel>
+    )
+  }
+  if (view.kind === "busy") {
+    return (
+      <StatePanel testId="public-signer-busy" title={view.title}>
+        다른 기기에서 이 서명 칸을 작성 중입니다. 잠시 후 다시 시도해 주세요.
       </StatePanel>
     )
   }
@@ -100,13 +110,13 @@ export function PublicSignerContent({ identify, submit, view }: PublicSignerCont
           </p>
         </div>
         {view.signatureAspectRatio === undefined ? (
-          <SignaturePad onSubmit={submit} />
+          <SignaturePad onCancel={cancel} onClearDraft={clearDraft} onDraft={draft} onSubmit={submit} />
         ) : (
           <div
             className="public-signer__proportional-pad"
             style={signatureAspectStyle(view.signatureAspectRatio)}
           >
-            <SignaturePad onSubmit={submit} />
+            <SignaturePad onCancel={cancel} onClearDraft={clearDraft} onDraft={draft} onSubmit={submit} />
           </div>
         )}
       </section>

@@ -51,6 +51,7 @@ final class PublicIdentifyService {
         if (!"OPEN".equals(signer.boardStatus())
                 || signer.linkVersion() != link.linkVersion()
                 || signer.submitted()
+                || claimedByAnotherSigner(signer)
                 || !"PLACED".equals(signer.placementStatus())
                 || signer.slotWidth() == null
                 || signer.slotHeight() == null) {
@@ -63,6 +64,13 @@ final class PublicIdentifyService {
         return new SignerSessionContract.Value(
                 signer.boardId(), signer.slotId(), signer.linkVersion(),
                 signer.slotRevision(), aspect, limiter.now());
+    }
+
+    private boolean claimedByAnotherSigner(SignerRecord signer) {
+        var claimId = signer.activeSignerClaim();
+        var expiresAt = signer.activeSignerClaimExpiresAt();
+        if ((claimId == null) != (expiresAt == null)) return true;
+        return claimId != null && expiresAt.isAfter(limiter.now());
     }
 
     private static RosterIdentity identity(IdentifyRequest request) {

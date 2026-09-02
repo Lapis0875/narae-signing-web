@@ -1,6 +1,7 @@
 package com.naraesigning.signer.identify;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -34,4 +35,22 @@ record SignerRecord(
         BigDecimal slotWidth,
         BigDecimal slotHeight,
         int canvasWidth,
-        int canvasHeight) {}
+        int canvasHeight,
+        UUID activeSignerClaim,
+        Instant activeSignerClaimExpiresAt) {
+    SignerRecord(
+            UUID boardId,
+            UUID slotId,
+            String boardStatus,
+            int linkVersion,
+            boolean submitted,
+            String placementStatus,
+            long slotRevision,
+            BigDecimal slotWidth,
+            BigDecimal slotHeight,
+            int canvasWidth,
+            int canvasHeight) {
+        this(boardId, slotId, boardStatus, linkVersion, submitted, placementStatus, slotRevision,
+                slotWidth, slotHeight, canvasWidth, canvasHeight, null, null);
+    }
+}

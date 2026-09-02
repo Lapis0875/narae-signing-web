@@ -12,6 +12,7 @@ public final class SignerSessionContract {
     private static final String SLOT_REVISION = "signer.slotRevision";
     private static final String ASPECT = "signer.signatureAspectRatio";
     private static final String ISSUED_AT = "signer.issuedAt";
+    private static final String DRAFT_CLAIM_ID = "signer.draftClaimId";
 
     private SignerSessionContract() {}
 
@@ -39,6 +40,24 @@ public final class SignerSessionContract {
         return issuedAt != null
                 && maximumLifetimeSeconds > 0
                 && now.isBefore(issuedAt.plusSeconds(maximumLifetimeSeconds));
+    }
+
+    public static UUID draftClaimId(HttpSession session) {
+        if (session == null) return null;
+        var value = session.getAttribute(DRAFT_CLAIM_ID);
+        return value instanceof UUID claimId ? claimId : null;
+    }
+
+    public static UUID ensureDraftClaimId(HttpSession session) {
+        var current = draftClaimId(session);
+        if (current != null) return current;
+        var claimId = UUID.randomUUID();
+        session.setAttribute(DRAFT_CLAIM_ID, claimId);
+        return claimId;
+    }
+
+    public static void clearDraftClaim(HttpSession session) {
+        if (session != null) session.removeAttribute(DRAFT_CLAIM_ID);
     }
 
     public static State validate(Value signer, CurrentState current) {

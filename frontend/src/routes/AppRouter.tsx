@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom"
 import { adminBoardRoutes } from "./AdminBoardRoutes.tsx"
 import { FullViewRoute } from "./FullViewRoute.tsx"
 import { PublicSignerRoute } from "./PublicSignerRoute.tsx"
+import { PublicDisplayRoute } from "./PublicDisplayRoute.tsx"
 
 // TODO11_AUTH_ROUTES_START
 import { AdminRouteGuard } from "./AdminRouteGuard.tsx"
@@ -24,6 +25,7 @@ const authRoutes = (
 
 // TODO24_PUBLIC_SIGN_ROUTE_START
 const publicSignRoute = <Route path="/sign/:shareToken" element={<PublicSignerRoute />} />
+const publicDisplayRoute = <Route path="/display/:shareToken" element={<PublicDisplayRoute />} />
 // TODO24_PUBLIC_SIGN_ROUTE_END
 
 export function AppRouter() {
@@ -31,6 +33,7 @@ export function AppRouter() {
     <Routes>
       {authRoutes}
       {publicSignRoute}
+      {publicDisplayRoute}
       <Route path="*" element={<Navigate replace to="/login" />} />
     </Routes>
   )

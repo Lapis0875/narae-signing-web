@@ -1,6 +1,7 @@
 package com.naraesigning.signer.identify;
 
 import com.naraesigning.session.SessionCookieActions;
+import com.naraesigning.session.SignerSessionContract;
 import com.naraesigning.signature.SignatureSession;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -39,7 +40,7 @@ final class PublicSigningSessionController {
             clear(httpSession, request, response);
             throw PublicIdentifyException.sessionExpired();
         }
-        var result = sessions.read(session);
+        var result = sessions.read(session, SignerSessionContract.draftClaimId(httpSession), clock.instant());
         if (result.clearSession()) {
             clear(httpSession, request, response);
         }

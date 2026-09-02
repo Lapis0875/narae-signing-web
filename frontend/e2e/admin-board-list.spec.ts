@@ -197,6 +197,7 @@ test("creates a board and keeps the server roster snapshot through import errors
           canvasWidth: 800,
           slots: [{
             background: "white",
+            draftSignature: null,
             height: 0.25,
             id: "10000000-0000-4000-8000-000000000001",
             signature: null,

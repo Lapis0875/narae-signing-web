@@ -1,42 +1,34 @@
 package com.naraesigning.realtime;
 
-import com.naraesigning.session.AdminSessionContract;
-import jakarta.servlet.http.HttpSession;
 import java.io.IOException;
-import java.time.Clock;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @Component
-final class BoardRealtimeRegistry {
-    private final Clock clock;
+final class PublicBoardRealtimeRegistry {
     private final ConcurrentHashMap<UUID, Connection> connections = new ConcurrentHashMap<>();
     private final AtomicLong eventIds = new AtomicLong();
 
-    BoardRealtimeRegistry() { this(Clock.systemUTC()); }
-    BoardRealtimeRegistry(Clock clock) { this.clock = clock; }
-
-    boolean register(UUID boardId, HttpSession session, SseEmitter emitter) {
-        if (!AdminSessionContract.isCurrent(session, clock.instant())) {
+    void register(UUID boardId, BooleanSupplier current, SseEmitter emitter) {
+        if (!current(current)) {
             emitter.complete();
-            return false;
+            return;
         }
         var connectionId = UUID.randomUUID();
-        connections.put(connectionId, new Connection(boardId, session, emitter));
+        var connection = new Connection(boardId, current, emitter);
+        connections.put(connectionId, connection);
         emitter.onCompletion(() -> connections.remove(connectionId));
         emitter.onTimeout(() -> connections.remove(connectionId));
         emitter.onError(error -> connections.remove(connectionId));
         try {
             emitter.send(SseEmitter.event().comment("connected"));
-            return true;
         } catch (IOException | IllegalStateException exception) {
-            connections.remove(connectionId);
-            emitter.complete();
-            return false;
+            remove(connectionId, connection);
         }
     }
 
@@ -50,46 +42,42 @@ final class BoardRealtimeRegistry {
     @Scheduled(fixedDelay = 15_000)
     void heartbeat() {
         connections.forEach((connectionId, connection) -> {
-            if (!current(connection)) {
-                connections.remove(connectionId);
-                connection.emitter().complete();
+            if (!current(connection.current())) {
+                remove(connectionId, connection);
                 return;
             }
             try {
                 connection.emitter().send(SseEmitter.event().comment("heartbeat"));
             } catch (IOException | IllegalStateException exception) {
-                connections.remove(connectionId);
-                connection.emitter().complete();
+                remove(connectionId, connection);
             }
         });
     }
 
-    int connectionCount() { return connections.size(); }
-
     private void send(UUID connectionId, Connection connection, long eventId, String type) {
-        if (!current(connection)) {
-            connections.remove(connectionId);
-            connection.emitter().complete();
+        if (!current(connection.current())) {
+            remove(connectionId, connection);
             return;
         }
         try {
-            connection.emitter().send(SseEmitter.event()
-                    .id(Long.toString(eventId))
-                    .name(type)
-                    .data("{}"));
+            connection.emitter().send(SseEmitter.event().id(Long.toString(eventId)).name(type).data("{}"));
         } catch (IOException | IllegalStateException exception) {
-            connections.remove(connectionId);
-            connection.emitter().complete();
+            remove(connectionId, connection);
         }
     }
 
-    private boolean current(Connection connection) {
+    private static boolean current(BooleanSupplier check) {
         try {
-            return AdminSessionContract.isCurrent(connection.session(), clock.instant());
-        } catch (IllegalStateException exception) {
+            return check.getAsBoolean();
+        } catch (RuntimeException exception) {
             return false;
         }
     }
 
-    private record Connection(UUID boardId, HttpSession session, SseEmitter emitter) {}
+    private void remove(UUID connectionId, Connection connection) {
+        connections.remove(connectionId);
+        connection.emitter().complete();
+    }
+
+    private record Connection(UUID boardId, BooleanSupplier current, SseEmitter emitter) {}
 }

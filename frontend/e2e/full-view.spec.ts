@@ -14,6 +14,7 @@ for (const viewport of viewports) {
     let backgroundResolved = false
     let pendingBackground: Route | null = null
     let pendingSnapshot: Route | null = null
+    let drafted = false
     let signed = false
     let snapshotRequests = 0
     const browserErrors: string[] = []
@@ -73,6 +74,9 @@ for (const viewport of viewports) {
       canvasWidth: 800,
       slots: [{
         background: "white",
+        draftSignature: drafted
+          ? { version: 1, strokes: [{ points: [{ x: 100_000, y: 200_000 }, { x: 900_000, y: 800_000 }] }] }
+          : null,
         height: 0.25,
         id: slotId,
         signature: signed
@@ -117,8 +121,31 @@ for (const viewport of viewports) {
     await expect(page.getByTestId("full-view-canvas")).toBeVisible()
     await expect(page.getByTestId("submitted-signature")).toHaveCount(0)
 
-    signed = true
+    drafted = true
     const beforeEvents = snapshotRequests
+    await page.evaluate(() => {
+      for (const detail of [
+        { id: 9, type: "signature-draft" },
+        { id: 9, type: "signature-draft" },
+      ]) {
+        window.dispatchEvent(new CustomEvent("qa-sse-event", { detail }))
+      }
+    })
+    await expect(page.getByTestId("submitted-signature")).toBeVisible()
+    await expect.poll(() => snapshotRequests).toBe(beforeEvents + 1)
+    await page.screenshot({ path: `../.omo/evidence/task-25-realtime-fullview/browser-matrix/${viewport.label}-draft.png` })
+
+    drafted = false
+    const beforeClear = snapshotRequests
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent("qa-sse-event", {
+      detail: { id: 10, type: "signature-draft-cleared" },
+    })))
+    await expect(page.getByTestId("submitted-signature")).toHaveCount(0)
+    await expect.poll(() => snapshotRequests).toBe(beforeClear + 1)
+    await page.screenshot({ path: `../.omo/evidence/task-25-realtime-fullview/browser-matrix/${viewport.label}-draft-cleared.png` })
+
+    signed = true
+    const beforeSubmission = snapshotRequests
     await page.evaluate(() => {
       for (const detail of [
         { id: 9, type: "signature-submitted" },
@@ -130,7 +157,7 @@ for (const viewport of viewports) {
       }
     })
     await expect(page.getByTestId("submitted-signature")).toBeVisible()
-    await expect.poll(() => snapshotRequests).toBe(beforeEvents + 1)
+    await expect.poll(() => snapshotRequests).toBe(beforeSubmission + 1)
     await expect(page.locator("main")).toHaveCount(1)
     await expect(page.getByRole("button")).toHaveCount(0)
     await expect(page.getByRole("link")).toHaveCount(0)

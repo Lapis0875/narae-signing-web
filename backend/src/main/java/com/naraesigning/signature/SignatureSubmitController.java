@@ -1,5 +1,6 @@
 package com.naraesigning.signature;
 
+import com.naraesigning.session.SignerSessionContract;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.time.Clock;
@@ -28,7 +29,9 @@ final class SignatureSubmitController {
         var payload = parser.parse(request.getInputStream());
         var session = request.getSession(false);
         try {
-            signatures.submit(SignatureSession.from(session, clock.instant()), payload, clock.instant());
+            signatures.submit(SignatureSession.from(session, clock.instant()), payload,
+                    SignerSessionContract.ensureDraftClaimId(session), clock.instant());
+            SignerSessionContract.clearDraftClaim(session);
             return new SignatureSubmitResponse(true);
         } catch (SignatureSubmitException exception) {
             if (exception.clearsSession() && session != null) session.invalidate();

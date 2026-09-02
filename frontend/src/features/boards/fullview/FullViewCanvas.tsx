@@ -17,16 +17,19 @@ export function FullViewCanvas({ backgroundUrl, snapshot }: FullViewCanvasProps)
       style={{ aspectRatio: `${snapshot.canvasWidth} / ${snapshot.canvasHeight}` }}
     >
       {backgroundUrl === null ? null : <img alt="" className="full-view-background" src={backgroundUrl} />}
-      {snapshot.slots.map((slot) => (
-        <div
-          className="full-view-slot"
-          data-background={slot.background.toLowerCase()}
-          key={slot.id}
-          style={{ height: `${slot.height * 100}%`, left: `${slot.x * 100}%`, top: `${slot.y * 100}%`, width: `${slot.width * 100}%` }}
-        >
-          {slot.signature === null ? null : <SignatureGeometry signature={slot.signature} />}
-        </div>
-      ))}
+      {snapshot.slots.map((slot) => {
+        const signature = slot.draftSignature ?? slot.signature
+        return (
+          <div
+            className="full-view-slot"
+            data-background={slot.background.toLowerCase()}
+            key={slot.id}
+            style={{ height: `${slot.height * 100}%`, left: `${slot.x * 100}%`, top: `${slot.y * 100}%`, width: `${slot.width * 100}%` }}
+          >
+            {signature === null ? null : <SignatureGeometry signature={signature} />}
+          </div>
+        )
+      })}
     </div>
   )
 }

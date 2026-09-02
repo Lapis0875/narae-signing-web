@@ -5,6 +5,8 @@ import com.naraesigning.session.SignerSessionContract;
 import com.naraesigning.signature.SignatureSession;
 import com.naraesigning.slot.CanonicalAspect;
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.UUID;
 
 final class PublicSigningSessionService {
     private final PublicIdentifyRepository repository;
@@ -14,6 +16,10 @@ final class PublicSigningSessionService {
     }
 
     SigningSessionResult read(SignatureSession session) {
+        return read(session, null, Instant.EPOCH);
+    }
+
+    SigningSessionResult read(SignatureSession session, UUID claimId, Instant now) {
         if (!session.active()) {
             throw PublicIdentifyException.sessionExpired();
         }
@@ -42,15 +48,23 @@ final class PublicSigningSessionService {
             case STALE_LINK, STALE_SLOT, STALE_ASPECT -> stale();
             case UNAVAILABLE -> invalid();
             case CLOSED -> current.submitted() ? submitted() : closed();
-            case CURRENT -> currentState(current, signer.signatureAspectRatio());
+            case CURRENT -> currentState(current, signer.signatureAspectRatio(), claimId, now);
         };
     }
 
-    private static SigningSessionResult currentState(SignerRecord current, double aspect) {
+    private static SigningSessionResult currentState(
+            SignerRecord current, double aspect, UUID claimId, Instant now) {
         if (!"OPEN".equals(current.boardStatus())) {
             return invalid();
         }
-        return current.submitted() ? submitted() : ready(aspect);
+        if (current.submitted()) return submitted();
+        var activeClaim = current.activeSignerClaim();
+        var expiresAt = current.activeSignerClaimExpiresAt();
+        if ((activeClaim == null) != (expiresAt == null)) return invalid();
+        if (activeClaim != null && expiresAt.isAfter(now) && !activeClaim.equals(claimId)) {
+            return busy();
+        }
+        return ready(aspect);
     }
 
     private static SigningSessionResult ready(double aspect) {
@@ -64,6 +78,10 @@ final class PublicSigningSessionService {
 
     private static SigningSessionResult closed() {
         return state(SigningSessionState.CLOSED, false);
+    }
+
+    private static SigningSessionResult busy() {
+        return state(SigningSessionState.BUSY, false);
     }
 
     private static SigningSessionResult stale() {
@@ -88,6 +106,7 @@ enum SigningSessionState {
     READY,
     SUBMITTED,
     CLOSED,
+    BUSY,
     STALE,
     INVALID
 }

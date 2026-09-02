@@ -4,7 +4,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-@RestControllerAdvice(assignableTypes = SignatureSubmitController.class)
+@RestControllerAdvice(assignableTypes = {
+        SignatureSubmitController.class,
+        SignatureDraftController.class
+})
 final class SignatureSubmitAdvice {
     @ExceptionHandler(SignatureSubmitException.class)
     ResponseEntity<SignatureSubmitError> submitError(SignatureSubmitException exception) {

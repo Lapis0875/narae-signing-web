@@ -64,6 +64,7 @@ class MvpApi {
   private boardStatus: BoardStatus = "설정 중"
   private deleted = false
   private roster: RosterEntry[] = []
+  private draft = false
   private submitted = false
   private readonly eventWaiters: Array<() => void> = []
   readonly calls: string[] = []
@@ -203,6 +204,9 @@ class MvpApi {
         canvasWidth: 800,
         slots: this.roster.map((entry) => ({
           background: "transparent",
+          draftSignature: this.draft && !this.submitted
+            ? { strokes: [{ points: [{ x: 100_000, y: 200_000 }, { x: 800_000, y: 700_000 }] }], version: 1 }
+            : null,
           height: entry.slot.height,
           id: slotId,
           signature: this.submitted
@@ -230,8 +234,22 @@ class MvpApi {
       if (!identified) return route.fulfill({ json: { code: "UNAUTHORIZED" }, status: 401 })
       return route.fulfill({ json: { signatureAspectRatio: 16 / 9, state: this.submitted ? "SUBMITTED" : "READY" } })
     }
+    if (key === "PUT /api/v1/public/signing-session/draft") {
+      expect(request.postDataJSON()).toMatchObject({ version: 1 })
+      this.draft = true
+      return route.fulfill({ status: 204 })
+    }
+    if (key === "POST /api/v1/public/signing-session/draft/clear") {
+      this.draft = false
+      return route.fulfill({ status: 204 })
+    }
+    if (key === "POST /api/v1/public/signing-session/cancel") {
+      this.draft = false
+      return route.fulfill({ status: 204 })
+    }
     if (key === "POST /api/v1/public/signing-session/signature") {
       expect(request.postDataJSON()).toMatchObject({ version: 1 })
+      this.draft = false
       this.submitted = true
       this.roster = this.roster.map((entry) => ({ ...entry, submitted: true }))
       for (const resolve of this.eventWaiters.splice(0)) resolve()
@@ -340,6 +358,7 @@ test("manager and signer complete one integrated synthetic event", async ({ brow
     `POST /api/v1/admin/boards/${boardId}/open`,
     `GET /api/v1/admin/boards/${boardId}/events`,
     `POST /api/v1/public/links/${shareToken}/identify`,
+    "PUT /api/v1/public/signing-session/draft",
     "POST /api/v1/public/signing-session/signature",
     `POST /api/v1/admin/boards/${boardId}/close`,
     `GET /api/v1/admin/boards/${boardId}/final.png`,
@@ -391,11 +410,17 @@ test("authorized live stack completes one integrated synthetic event", async ({ 
   if (boardMatch === null) throw new Task30ConfigurationError("live board URL")
   const boardIdentifier = boardMatch[1]
 
-  // When: the manager listens through real SSE while the second context identifies, draws, and submits.
+  // When: the manager and public display listen through real SSE while a signer draws.
   const fullView = await managerContext.newPage()
   observe(fullView, baseUrl.origin, pageErrors, escapedOrigins)
   await fullView.goto(new URL(`/boards/${boardIdentifier}/full`, baseUrl).toString())
   await expect(fullView.getByTestId("submitted-signature")).toHaveCount(0)
+  const displayUrl = new URL(shareUrl)
+  displayUrl.pathname = displayUrl.pathname.replace(/^\/sign\//u, "/display/")
+  const publicDisplay = await managerContext.newPage()
+  observe(publicDisplay, baseUrl.origin, pageErrors, escapedOrigins)
+  await publicDisplay.goto(displayUrl.toString())
+  await expect(publicDisplay.getByTestId("submitted-signature")).toHaveCount(0)
   await signer.goto(shareUrl)
   await signer.getByLabel("소속사 (선택)").fill(identity.organization)
   await signer.getByLabel("직책 (선택)").fill(identity.job)
@@ -408,11 +433,34 @@ test("authorized live stack completes one integrated synthetic event", async ({ 
   await signer.mouse.down()
   await signer.mouse.move(box.x + 140, box.y + 90, { steps: 4 })
   await signer.mouse.up()
-  await signer.getByRole("button", { name: "서명 제출" }).click()
-
-  // Then: live SSE refreshes the full view before close, final PNG download, and confirmed deletion.
-  await expect(signer.getByTestId("public-signer-complete")).toBeVisible()
   await expect(fullView.getByTestId("submitted-signature")).toHaveCount(1)
+  await expect(publicDisplay.getByTestId("submitted-signature")).toHaveCount(1)
+  await signer.getByRole("button", { name: "서명 취소" }).click()
+  await expect(signer.getByTestId("public-signer-identify")).toBeVisible()
+  await expect(fullView.getByTestId("submitted-signature")).toHaveCount(0)
+  await expect(publicDisplay.getByTestId("submitted-signature")).toHaveCount(0)
+
+  const replacementContext = await browser.newContext({ baseURL: baseUrl.toString() })
+  const replacement = await replacementContext.newPage()
+  observe(replacement, baseUrl.origin, pageErrors, escapedOrigins)
+  await replacement.goto(shareUrl)
+  await replacement.getByLabel("소속사 (선택)").fill(identity.organization)
+  await replacement.getByLabel("직책 (선택)").fill(identity.job)
+  await replacement.getByLabel("이름").fill(identity.name)
+  await replacement.getByRole("button", { name: "정보 확인" }).click()
+  const replacementCanvas = replacement.getByTestId("signer-canvas")
+  const replacementBox = await replacementCanvas.boundingBox()
+  if (replacementBox === null) throw new Task30ConfigurationError("replacement signer canvas")
+  await replacement.mouse.move(replacementBox.x + 40, replacementBox.y + 40)
+  await replacement.mouse.down()
+  await replacement.mouse.move(replacementBox.x + 140, replacementBox.y + 90, { steps: 4 })
+  await replacement.mouse.up()
+  await replacement.getByRole("button", { name: "서명 제출" }).click()
+
+  // Then: a replacement device submits after cancellation and all views refresh before close.
+  await expect(replacement.getByTestId("public-signer-complete")).toBeVisible()
+  await expect(fullView.getByTestId("submitted-signature")).toHaveCount(1)
+  await expect(publicDisplay.getByTestId("submitted-signature")).toHaveCount(1)
   await manager.getByRole("button", { name: "마감" }).click()
   await expect(manager.getByText("마감/보관", { exact: true })).toBeVisible()
   const download = manager.waitForEvent("download")
@@ -424,6 +472,7 @@ test("authorized live stack completes one integrated synthetic event", async ({ 
   await expect(manager.getByText("아직 만든 보드가 없습니다.")).toBeVisible()
   expect(pageErrors).toEqual([])
   expect(escapedOrigins).toEqual([])
+  await replacementContext.close()
   await signerContext.close()
   await managerContext.close()
 })

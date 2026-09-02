@@ -2,6 +2,7 @@ package com.naraesigning.realtime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -44,6 +45,7 @@ class BoardRealtimeRegistryTest {
         var isolated = mock(SseEmitter.class);
         registry.register(board, session(NOW), matching);
         registry.register(otherBoard, session(NOW), isolated);
+        clearInvocations(matching, isolated);
 
         // When
         registry.publish(board, "signature-submitted");

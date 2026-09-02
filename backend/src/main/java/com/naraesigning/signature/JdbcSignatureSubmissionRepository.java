@@ -5,6 +5,7 @@ import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcOperations;
 import org.springframework.transaction.support.TransactionOperations;
@@ -23,18 +24,39 @@ final class JdbcSignatureSubmissionRepository implements SignatureSubmissionRepo
         return transactions.execute(status -> {
             var board = lockBoard(boardId);
             var state = lockSlot(board, slotId);
-            return action.apply(state, (encrypted, submittedAt) -> {
-                requireSingleUpdate(jdbc.update("""
-                        update signature_slot set encrypted_strokes = ?, strokes_nonce = ?,
-                            strokes_key_version = ?, submitted_at = ?
-                        where id = ? and encrypted_strokes is null and strokes_nonce is null
-                            and strokes_key_version is null and submitted_at is null
-                        """, encrypted.ciphertext(), encrypted.nonce(), encrypted.keyVersion(),
-                        Timestamp.from(submittedAt), slotId));
-                requireSingleUpdate(jdbc.update("""
-                        update roster_entry set submitted = true, updated_at = current_timestamp
-                        where id = ? and submitted = false
-                        """, state.rosterEntryId()));
+            return action.apply(state, new SubmissionWriter() {
+                @Override
+                public void save(com.naraesigning.crypto.EncryptedValue encrypted, Instant submittedAt) {
+                    requireSingleUpdate(jdbc.update("""
+                            update signature_slot set encrypted_strokes = ?, strokes_nonce = ?,
+                                strokes_key_version = ?, submitted_at = ?, active_signer_claim = null,
+                                active_signer_claim_expires_at = null
+                            where id = ? and encrypted_strokes is null and strokes_nonce is null
+                                and strokes_key_version is null and submitted_at is null
+                            """, encrypted.ciphertext(), encrypted.nonce(), encrypted.keyVersion(),
+                            Timestamp.from(submittedAt), slotId));
+                    requireSingleUpdate(jdbc.update("""
+                            update roster_entry set submitted = true, updated_at = current_timestamp
+                            where id = ? and submitted = false
+                            """, state.rosterEntryId()));
+                }
+
+                @Override
+                public void renewClaim(UUID claimId, Instant expiresAt) {
+                    requireSingleUpdate(jdbc.update("""
+                            update signature_slot set active_signer_claim = ?,
+                                active_signer_claim_expires_at = ? where id = ?
+                            """, claimId, Timestamp.from(expiresAt), slotId));
+                }
+
+                @Override
+                public void releaseClaim(UUID claimId) {
+                    jdbc.update("""
+                            update signature_slot set active_signer_claim = null,
+                                active_signer_claim_expires_at = null
+                            where id = ? and active_signer_claim = ?
+                            """, slotId, claimId);
+                }
             });
         });
     }
@@ -57,7 +79,8 @@ final class JdbcSignatureSubmissionRepository implements SignatureSubmissionRepo
         var state = jdbc.query("""
                 select r.board_id, r.id roster_entry_id, r.submitted,
                        s.id slot_id, s.placement_status, s.slot_revision, s.width, s.height,
-                       s.encrypted_strokes, s.strokes_nonce, s.strokes_key_version, s.submitted_at
+                       s.encrypted_strokes, s.strokes_nonce, s.strokes_key_version, s.submitted_at,
+                       s.active_signer_claim, s.active_signer_claim_expires_at
                 from signature_slot s join roster_entry r on r.id = s.roster_entry_id
                 where r.board_id = ? and s.id = ? for update of s, r
                 """, resultSet -> resultSet.next() ? map(board, resultSet) : null,
@@ -86,7 +109,10 @@ final class JdbcSignatureSubmissionRepository implements SignatureSubmissionRepo
                 resultSet.getBytes("strokes_nonce") != null,
                 resultSet.getObject("strokes_key_version") != null,
                 resultSet.getTimestamp("submitted_at") == null
-                        ? null : resultSet.getTimestamp("submitted_at").toInstant());
+                        ? null : resultSet.getTimestamp("submitted_at").toInstant(),
+                resultSet.getObject("active_signer_claim", UUID.class),
+                resultSet.getTimestamp("active_signer_claim_expires_at") == null
+                        ? null : resultSet.getTimestamp("active_signer_claim_expires_at").toInstant());
     }
 
     private static void requireSingleUpdate(int changed) {
