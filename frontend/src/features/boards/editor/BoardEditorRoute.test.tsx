@@ -3,8 +3,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ToastProvider } from "../../../components/Toast.tsx"
+import { setCsrfToken } from "../../../api/client.ts"
 import type { Board } from "../list/boardApi.ts"
 import { BoardEditorRoute } from "./BoardEditorRoute.tsx"
 
@@ -34,9 +35,24 @@ const roster = [
   },
 ] as const
 
+beforeEach(() => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value: function (this: HTMLDialogElement) { this.setAttribute("open", "") },
+  })
+  Object.defineProperty(HTMLDialogElement.prototype, "close", {
+    configurable: true,
+    value: function (this: HTMLDialogElement) { this.removeAttribute("open") },
+  })
+})
+
 afterEach(() => {
   cleanup()
+  setCsrfToken(null)
+  document.cookie = "XSRF-TOKEN=; Max-Age=0; Path=/"
   vi.restoreAllMocks()
+  Reflect.deleteProperty(HTMLDialogElement.prototype, "close")
+  Reflect.deleteProperty(HTMLDialogElement.prototype, "showModal")
 })
 
 function json(value: unknown, status = 200) {
@@ -47,12 +63,14 @@ function renderEditor(
   background: () => Response,
   status: Board["status"] = board.status,
   actionExtensions?: ReactNode,
+  forceDisplay: () => Response = () => json({ code: "SERVICE_UNAVAILABLE" }, 503),
 ) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = input.toString()
     if (path.endsWith("/background")) return background()
     if (path.endsWith("/roster")) return json(roster)
     if (path.endsWith("/share")) return json({ shareToken: "safe-share", version: 1 })
+    if (path.endsWith("/display/force-replace")) return forceDisplay()
     return json({ ...board, status })
   })
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -119,5 +137,32 @@ describe("BoardEditorRoute", () => {
 
     await screen.findByRole("application", { name: "서명 보드 캔버스" })
     expect(screen.queryByRole("button", { name: "보드 영구 삭제" })).not.toBeInTheDocument()
+  })
+
+  it("Given a display replacement failure When an administrator confirms replacement Then one force request runs and its toast is visible", async () => {
+    // Given
+    let forceRequests = 0
+    document.cookie = "XSRF-TOKEN=csrf-test; Path=/"
+    renderEditor(
+      () => new Response(null, { status: 204 }),
+      board.status,
+      undefined,
+      () => {
+        forceRequests += 1
+        return json({ code: "SERVICE_UNAVAILABLE" }, 503)
+      },
+    )
+    await screen.findByRole("application", { name: "서명 보드 캔버스" })
+
+    // When
+    fireEvent.click(screen.getByRole("button", { name: "행사장 화면 교체" }))
+    fireEvent.click(screen.getByRole("button", { name: "취소" }))
+    expect(forceRequests).toBe(0)
+    fireEvent.click(screen.getByRole("button", { name: "행사장 화면 교체" }))
+    fireEvent.click(screen.getByRole("button", { name: "화면 교체" }))
+
+    // Then
+    await waitFor(() => expect(forceRequests).toBe(1))
+    expect(await screen.findByText("서비스에 연결할 수 없습니다.")).toBeVisible()
   })
 })

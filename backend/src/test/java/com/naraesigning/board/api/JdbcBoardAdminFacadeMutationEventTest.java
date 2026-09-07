@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -18,6 +19,7 @@ import com.naraesigning.board.core.BoardView;
 import com.naraesigning.slot.SlotBackground;
 import com.naraesigning.slot.SlotBounds;
 import com.naraesigning.slot.SlotService;
+import com.naraesigning.realtime.LiveSignatureRegistry;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -41,6 +43,8 @@ final class JdbcBoardAdminFacadeMutationEventTest {
     private BoardService boards;
     private SlotService slots;
     private BackgroundAssetService backgrounds;
+    private JdbcOperations jdbc;
+    private LiveSignatureRegistry drafts;
     private DeferredTransactions transactions;
     private List<Object> published;
     private JdbcBoardAdminFacade facade;
@@ -51,7 +55,8 @@ final class JdbcBoardAdminFacadeMutationEventTest {
         boards = mock(BoardService.class);
         slots = mock(SlotService.class);
         backgrounds = mock(BackgroundAssetService.class);
-        var jdbc = mock(JdbcOperations.class);
+        jdbc = mock(JdbcOperations.class);
+        drafts = mock(LiveSignatureRegistry.class);
         transactions = new DeferredTransactions();
         published = new ArrayList<>();
         var publisher = mock(ApplicationEventPublisher.class, invocation -> {
@@ -61,7 +66,8 @@ final class JdbcBoardAdminFacadeMutationEventTest {
         doReturn("DRAFT").when(jdbc).query(anyString(), any(ResultSetExtractor.class), eq(BOARD));
         when(boards.detail(any(), eq(BOARD))).thenReturn(new BoardView(
                 BOARD, "Board", "설정 중", 800, 600, 1, Instant.EPOCH, Instant.EPOCH));
-        facade = new JdbcBoardAdminFacade(boards, slots, backgrounds, jdbc, transactions, publisher);
+        facade = new JdbcBoardAdminFacade(boards, slots, backgrounds, jdbc, transactions, publisher,
+                drafts);
     }
 
     @Test
@@ -90,6 +96,21 @@ final class JdbcBoardAdminFacadeMutationEventTest {
         facade.deleteSlot(owner(), BOARD, SLOT);
         transactions.rollback();
         assertThat(published).isEmpty();
+    }
+
+    @Test
+    void closeFencesCachedDraftsBeforeWritingTheTerminalStatus() {
+        // Given
+        doReturn("OPEN").when(jdbc).query(anyString(), any(ResultSetExtractor.class), eq(BOARD));
+        doReturn(1).when(jdbc).update(anyString(), eq("CLOSED"), eq(BOARD), eq("OPEN"));
+
+        // When
+        facade.close(owner(), BOARD);
+
+        // Then
+        var order = inOrder(drafts, jdbc);
+        order.verify(drafts).fenceBoard(BOARD);
+        order.verify(jdbc).update(anyString(), eq("CLOSED"), eq(BOARD), eq("OPEN"));
     }
 
     private void assertAfterCommit(String expectedType, Runnable mutation) throws Exception {

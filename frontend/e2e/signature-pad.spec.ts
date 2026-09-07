@@ -7,6 +7,7 @@ import {
   signatureCanvasBox,
 } from "../src/features/signing/pad/e2eDriver.ts";
 import { horizontalContractMatches } from "../src/features/signing/pad/e2eOracle.ts";
+import "./signatureDraftRecovery.ts";
 
 test("tablet pointer signature pad preserves deterministic bounded input", async ({
   browserName,

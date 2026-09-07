@@ -36,6 +36,10 @@ final class SignatureSubmitException extends RuntimeException {
         return new SignatureSubmitException("signature_in_progress", 409, false);
     }
 
+    static SignatureSubmitException draftOutOfSync() {
+        return new SignatureSubmitException("signature_draft_out_of_sync", 409, false);
+    }
+
     static SignatureSubmitException invalidState() {
         return new SignatureSubmitException("signature_state_invalid", 409, true);
     }

@@ -2,16 +2,18 @@ import { z } from "zod"
 import { apiRequest } from "../../../api/client.ts"
 import { apiErrorFromResponse } from "../../../api/errors.ts"
 
-const pointSchema = z.strictObject({ x: z.number().int().min(0).max(1_000_000), y: z.number().int().min(0).max(1_000_000) })
-const signatureSchema = z.strictObject({
+export const pointSchema = z.strictObject({ x: z.number().int().min(0).max(1_000_000), y: z.number().int().min(0).max(1_000_000) })
+export const signatureSchema = z.strictObject({
   strokes: z.array(z.strictObject({ points: z.array(pointSchema).min(1) })).max(128),
   version: z.literal(1),
 })
 const slotSchema = z.strictObject({
   background: z.enum(["transparent", "white"]),
+  draftEpoch: z.number().int().nonnegative().default(0),
   draftSignature: signatureSchema.nullable(),
   height: z.number().positive(),
   id: z.uuid(),
+  revision: z.number().int().nonnegative().default(0),
   signature: signatureSchema.nullable(),
   width: z.number().positive(),
   x: z.number().min(0),

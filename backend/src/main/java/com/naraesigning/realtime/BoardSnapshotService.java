@@ -81,10 +81,13 @@ final class BoardSnapshotService {
         var id = result.getObject("id", UUID.class);
         var encrypted = result.getBytes("encrypted_strokes");
         var signature = encrypted == null ? null : decrypt(result, id, encrypted);
+        var live = drafts == null
+                ? new LiveSignatureRegistry.Snapshot(null, 0, 0)
+                : drafts.snapshot(boardId, id);
         return new BoardSnapshot.Slot(id, result.getBigDecimal("x"), result.getBigDecimal("y"),
                 result.getBigDecimal("width"), result.getBigDecimal("height"),
                 result.getString("background_color"), signature,
-                signature == null && drafts != null ? drafts.signature(boardId, id) : null);
+                signature == null ? live.signature() : null, live.draftEpoch(), live.revision());
     }
 
     private com.fasterxml.jackson.databind.JsonNode decrypt(ResultSet result, UUID slotId, byte[] encrypted)

@@ -15,9 +15,11 @@ describe("full view canvas", () => {
       canvasWidth: 800,
       slots: [{
         background: "white" as const,
+        draftEpoch: 0,
         draftSignature: null,
         height: 0.2,
         id: "00000000-0000-4000-8000-000000000002",
+        revision: 0,
         signature: null,
         width: 0.3,
         x: 0.1,
@@ -49,9 +51,11 @@ describe("full view canvas", () => {
       canvasWidth: 800,
       slots: [{
         background: "transparent" as const,
+        draftEpoch: 1,
         draftSignature: { strokes: [{ points: [{ x: 100, y: 200 }] }], version: 1 as const },
         height: 0.2,
         id: "00000000-0000-4000-8000-000000000002",
+        revision: 1,
         signature: null,
         width: 0.3,
         x: 0.1,

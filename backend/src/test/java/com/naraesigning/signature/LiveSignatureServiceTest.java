@@ -36,7 +36,7 @@ class LiveSignatureServiceTest {
                 .isInstanceOfSatisfying(SignatureSubmitException.class,
                         exception -> assertThat(exception.code()).isEqualTo("signature_in_progress"));
         verify(drafts).update(eq(BOARD_ID), eq(SLOT_ID), eq(firstClaim), any(byte[].class),
-                eq(NOW.plus(LiveSignatureService.LEASE_DURATION)));
+                eq(NOW.plus(LiveSignatureService.LEASE_DURATION)), eq(0L));
     }
 
     @Test
@@ -51,7 +51,7 @@ class LiveSignatureServiceTest {
 
         assertThat(repository.state.activeSignerClaim()).isNull();
         assertThat(repository.state.activeSignerClaimExpiresAt()).isNull();
-        verify(drafts).clear(BOARD_ID, SLOT_ID, claim);
+        verify(drafts).cancel(BOARD_ID, SLOT_ID, claim);
     }
 
     @Test
@@ -67,7 +67,8 @@ class LiveSignatureServiceTest {
         assertThat(repository.state.activeSignerClaim()).isEqualTo(claim);
         assertThat(repository.state.activeSignerClaimExpiresAt())
                 .isEqualTo(NOW.plusSeconds(10).plus(LiveSignatureService.LEASE_DURATION));
-        verify(drafts).clear(BOARD_ID, SLOT_ID, claim);
+        verify(drafts).clear(
+                BOARD_ID, SLOT_ID, claim, NOW.plusSeconds(10).plus(LiveSignatureService.LEASE_DURATION));
     }
 
     private static SignatureSession session() {

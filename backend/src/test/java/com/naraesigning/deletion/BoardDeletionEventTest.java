@@ -2,8 +2,10 @@ package com.naraesigning.deletion;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 import com.naraesigning.realtime.BoardMutationEvent;
+import com.naraesigning.realtime.LiveSignatureRegistry;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -24,7 +26,8 @@ class BoardDeletionEventTest {
             assertThat(event).isEqualTo(new BoardMutationEvent(boardId, "board-deleted"));
         };
 
-        new BoardDeletionService(store, events).delete(UUID.randomUUID(), boardId);
+        new BoardDeletionService(store, events, mock(LiveSignatureRegistry.class))
+                .delete(UUID.randomUUID(), boardId);
 
         assertThat(order).containsExactly("phase-a-commit", "event");
     }
@@ -35,11 +38,13 @@ class BoardDeletionEventTest {
         var boardId = UUID.randomUUID();
 
         assertThatThrownBy(() -> new BoardDeletionService(
-                new RecordingStore(new ArrayList<>(), false, true), published::add)
+                new RecordingStore(new ArrayList<>(), false, true), published::add,
+                mock(LiveSignatureRegistry.class))
                 .delete(UUID.randomUUID(), boardId))
                 .isInstanceOf(BoardDeletionException.class)
                 .hasMessage("BOARD_STATE_CONFLICT");
-        new BoardDeletionService(new RecordingStore(new ArrayList<>(), false, false), published::add)
+        new BoardDeletionService(new RecordingStore(new ArrayList<>(), false, false), published::add,
+                mock(LiveSignatureRegistry.class))
                 .delete(UUID.randomUUID(), boardId);
 
         assertThat(published).isEmpty();

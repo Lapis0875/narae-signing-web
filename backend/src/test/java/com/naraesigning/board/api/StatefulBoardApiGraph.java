@@ -16,6 +16,7 @@ import com.naraesigning.roster.RosterEntry;
 import com.naraesigning.roster.RosterIdentity;
 import com.naraesigning.roster.RosterService;
 import com.naraesigning.realtime.BoardMutationEvent;
+import com.naraesigning.realtime.LiveSignatureRegistry;
 import com.naraesigning.slot.Slot;
 import com.naraesigning.slot.SlotBackground;
 import com.naraesigning.slot.SlotBounds;
@@ -55,7 +56,8 @@ final class StatefulBoardApiGraph {
     private final JdbcOperations jdbc = mock(JdbcOperations.class, this::jdbcCall);
     private final ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class, this::eventCall);
     private final BoardAdminFacade facade = new AuditedFacade(new JdbcBoardAdminFacade(
-            boardCore.service, slotService, backgrounds, jdbc, transactions(), publisher));
+            boardCore.service, slotService, backgrounds, jdbc, transactions(), publisher,
+            mock(LiveSignatureRegistry.class)));
     private int ownerLookups;
     private boolean failPostTransitionDetail;
     private BackgroundState background;

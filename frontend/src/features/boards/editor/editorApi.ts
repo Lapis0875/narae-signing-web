@@ -109,6 +109,13 @@ export async function reissueShare(boardId: string): Promise<Share> {
   )
 }
 
+export async function forceReplaceDisplay(boardId: string): Promise<void> {
+  await apiRequest(
+    `/api/v1/admin/boards/${z.uuid().parse(boardId)}/display/force-replace`,
+    { method: "POST" },
+  )
+}
+
 export async function uploadBackground(
   boardId: string,
   file: File,
