@@ -45,6 +45,15 @@ export class ColdDraftContract {
   private openStroke = -1;
   private revision = 0;
 
+  clear = (): Promise<boolean> => {
+    this.strokes.splice(0);
+    this.draftEpoch += 1;
+    this.clientSequence = 0;
+    this.openStroke = -1;
+    this.revision = 0;
+    return Promise.resolve(true);
+  };
+
   put = (payload: SignaturePayload): Promise<SignatureDraftVersion | null> => {
     this.strokes.splice(
       0,

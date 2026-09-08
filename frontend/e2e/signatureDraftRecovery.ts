@@ -80,17 +80,23 @@ test("failed signer deltas recover with a lossless full reset before resuming", 
       activeRequests -= 1;
       await route.fulfill({ contentType: "application/json", json: { draftEpoch: 4, revision } });
     });
+    await context.addCookies([{
+      name: "XSRF-TOKEN",
+      url: new URL("/", testInfo.project.use.baseURL).href,
+      value: "e2e",
+    }]);
     await page.goto("/e2e/harness/signature-pad.html?draft-sync=1");
-    await context.addCookies([{ name: "XSRF-TOKEN", url: page.url(), value: "e2e" }]);
     const canvas = page.getByTestId("signer-canvas");
     const box = await signatureCanvasBox(page);
+    await expect.poll(() => fullDrafts.length).toBe(1);
+    expect(fullDrafts[0]).toEqual({ strokes: [], version: 1 });
 
     await dispatchPenStroke(cdp, [
       { x: box.x + box.width * 0.25, y: box.y + box.height * 0.25 },
       { x: box.x + box.width * 0.5, y: box.y + box.height * 0.5 },
       { x: box.x + box.width * 0.75, y: box.y + box.height * 0.75 },
     ]);
-    await expect.poll(() => fullDrafts.length).toBe(1);
+    await expect.poll(() => fullDrafts.length).toBe(2);
     await dispatchPenStroke(cdp, [
       { x: box.x + box.width * 0.2, y: box.y + box.height * 0.2 },
       { x: box.x + box.width * 0.4, y: box.y + box.height * 0.4 },
@@ -99,7 +105,8 @@ test("failed signer deltas recover with a lossless full reset before resuming", 
     await expect.poll(() => resumedDeltas.some((delta) => delta.operation === "end")).toBe(true);
 
     expect(maxActiveRequests).toBe(1);
-    expect(fullDrafts[0]?.strokes[0]?.points).toEqual([
+    expect(fullDrafts[1]?.strokes).toHaveLength(1);
+    expect(fullDrafts[1]?.strokes[0]?.points).toEqual([
       { x: 250_000, y: 250_000 },
       { x: 500_000, y: 500_000 },
       { x: 750_000, y: 750_000 },
@@ -109,9 +116,10 @@ test("failed signer deltas recover with a lossless full reset before resuming", 
       { x: 400_000, y: 400_000 },
       { x: 600_000, y: 600_000 },
     ]);
-    expect(requests[0]).toEqual(expect.objectContaining({ method: "POST", result: "failed" }));
-    expect(requests[1]).toEqual(expect.objectContaining({ method: "PUT", result: "ok" }));
-    expect(requests.slice(2).every((request) => request.method === "POST")).toBe(true);
+    expect(requests[0]).toEqual(expect.objectContaining({ method: "PUT", result: "ok" }));
+    expect(requests[1]).toEqual(expect.objectContaining({ method: "POST", result: "failed" }));
+    expect(requests[2]).toEqual(expect.objectContaining({ method: "PUT", result: "ok" }));
+    expect(requests.slice(3).every((request) => request.method === "POST")).toBe(true);
     expect(resumedDeltas.map((delta) => delta.clientSequence)).toEqual([1, 2, 3, 4]);
     await expect(canvas).toHaveAttribute("data-point-count", "6");
     await page.screenshot({ path: path.join(evidenceDir, "task-4-manual-recovery.png") });

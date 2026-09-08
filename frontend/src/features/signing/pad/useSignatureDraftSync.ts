@@ -73,29 +73,33 @@ export function useSignatureDraftSync({
         sendingRef.current = false;
         return;
       }
+      fullSyncRef.current = false;
       const request = Promise.resolve()
         .then(() => sendFull(currentPayload))
         .then(
           (saved) => {
             if (saved === null) {
+              fullSyncRef.current = true;
               setFailure();
-              return;
+              return false;
             }
             pendingRef.current.splice(0, reflectedCount);
             versionRef.current = saved;
             sequenceRef.current = 0;
             initialSyncRef.current = false;
             recoveryRef.current = false;
-            fullSyncRef.current = false;
+            return true;
           },
-          () => setFailure(),
+          () => {
+            fullSyncRef.current = true;
+            setFailure();
+            return false;
+          },
         )
-        .then(() => {
+        .then((saved) => {
           sendingRef.current = false;
           if (
-            !initialSyncRef.current &&
-            !recoveryRef.current &&
-            !fullSyncRef.current &&
+            saved &&
             mountedRef.current &&
             timerRef.current === null
           ) {
@@ -183,11 +187,14 @@ export function useSignatureDraftSync({
     }
     flush();
     const heartbeat = setInterval(() => {
+      if (!readyForFull() || sendingRef.current) {
+        return;
+      }
       fullSyncRef.current = true;
       flush();
     }, 20_000);
     return () => clearInterval(heartbeat);
-  }, [flush, sendDelta, sendFull]);
+  }, [flush, readyForFull, sendDelta, sendFull]);
 
   useEffect(() => () => {
     if (timerRef.current !== null) {
@@ -205,5 +212,13 @@ export function useSignatureDraftSync({
     await requestRef.current;
   }, [stopping]);
 
-  return { queue, replace, stop };
+  const resumeAfterClear = useCallback(() => {
+    initialSyncRef.current = true;
+    recoveryRef.current = false;
+    fullSyncRef.current = false;
+    stopping.current = false;
+    flush();
+  }, [flush, stopping]);
+
+  return { queue, replace, resumeAfterClear, stop };
 }

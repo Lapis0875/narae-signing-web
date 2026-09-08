@@ -64,6 +64,7 @@ export function SignaturePad({
   const {
     queue: queueDraft,
     replace: replaceDraft,
+    resumeAfterClear: resumeDraftAfterClear,
     stop: stopDraftSync,
   } = useSignatureDraftSync({
     payload: draftPayload,
@@ -182,7 +183,7 @@ export function SignaturePad({
       (cleared) => setStatus(cleared ? "서명을 모두 지웠습니다." : "서명을 지우지 못했습니다."),
       () => setStatus("서명을 지우지 못했습니다."),
     ).finally(() => {
-      draftStoppingRef.current = false;
+      resumeDraftAfterClear();
       setClearing(false);
     });
   };
@@ -198,11 +199,16 @@ export function SignaturePad({
       return onCancel();
     }).then(
       (cancelled) => {
-        if (!cancelled) setStatus("서명을 취소하지 못했습니다.");
+        if (!cancelled) {
+          setStatus("서명을 취소하지 못했습니다.");
+          resumeDraftAfterClear();
+        }
       },
-      () => setStatus("서명을 취소하지 못했습니다."),
+      () => {
+        setStatus("서명을 취소하지 못했습니다.");
+        resumeDraftAfterClear();
+      },
     ).finally(() => {
-      draftStoppingRef.current = false;
       setClearing(false);
     });
   };
