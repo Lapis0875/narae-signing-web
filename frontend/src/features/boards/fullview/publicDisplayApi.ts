@@ -18,6 +18,13 @@ export class PublicDisplayDeniedError extends Error {
   }
 }
 
+export class PublicDisplayUnavailableError extends Error {
+  constructor() {
+    super("Public display link is unavailable")
+    this.name = "PublicDisplayUnavailableError"
+  }
+}
+
 function displayPath(shareToken: string, suffix: string): string {
   return `/api/v1/public/links/${encodeURIComponent(z.string().min(1).parse(shareToken))}/display/${suffix}`
 }
@@ -61,37 +68,64 @@ export async function claimPublicDisplay(shareToken: string): Promise<null> {
   return null
 }
 
-export async function heartbeatPublicDisplay(shareToken: string): Promise<"active" | "denied" | "unavailable"> {
+export async function heartbeatPublicDisplay(shareToken: string): Promise<"active" | "denied" | "revoked" | "unavailable"> {
   try {
     await requestLease(shareToken, "heartbeat")
     return "active"
   } catch (error) {
     if (error instanceof PublicDisplayDeniedError) return "denied"
+    if (error instanceof ApiError && error.status === 404) return "revoked"
     if (error instanceof TypeError || error instanceof z.ZodError) return "unavailable"
     if (error instanceof ApiError) return "unavailable"
     throw error
   }
 }
 
-export function publicDisplayReleaseUrl(shareToken: string): string {
-  return displayPath(shareToken, "release")
+export async function releasePublicDisplay(shareToken: string): Promise<void> {
+  try {
+    await apiRequest(displayPath(shareToken, "release"), {
+      keepalive: true,
+      method: "POST",
+      referrerPolicy: "no-referrer",
+    })
+  } catch (error) {
+    if (error instanceof ApiError) return
+    throw error
+  }
 }
 
 export async function fetchPublicDisplayTitle(shareToken: string): Promise<string> {
-  const body = await apiRequest(displayPath(shareToken, "title"))
-  return displayTitleSchema.parse(body).title
+  try {
+    const body = await apiRequest(displayPath(shareToken, "title"))
+    return displayTitleSchema.parse(body).title
+  } catch (error) {
+    terminalDisplayError(error)
+  }
 }
 
 export async function fetchPublicDisplaySnapshot(shareToken: string): Promise<FullViewSnapshot> {
-  return fullViewSnapshotSchema.parse(await apiRequest(displayPath(shareToken, "snapshot")))
+  try {
+    return fullViewSnapshotSchema.parse(await apiRequest(displayPath(shareToken, "snapshot")))
+  } catch (error) {
+    terminalDisplayError(error)
+  }
 }
 
 export async function fetchPublicDisplayBackground(shareToken: string): Promise<Blob | null> {
-  const response = await fetch(displayPath(shareToken, "background"), {
-    credentials: "same-origin",
-    referrerPolicy: "no-referrer",
-  })
-  if (response.status === 204) return null
-  if (!response.ok) throw await apiErrorFromResponse(response)
-  return response.blob()
+  try {
+    const response = await fetch(displayPath(shareToken, "background"), {
+      credentials: "same-origin",
+      referrerPolicy: "no-referrer",
+    })
+    if (response.status === 204) return null
+    if (!response.ok) throw await apiErrorFromResponse(response)
+    return response.blob()
+  } catch (error) {
+    terminalDisplayError(error)
+  }
+}
+
+function terminalDisplayError(error: unknown): never {
+  if (error instanceof ApiError && error.status === 404) throw new PublicDisplayUnavailableError()
+  throw error
 }
