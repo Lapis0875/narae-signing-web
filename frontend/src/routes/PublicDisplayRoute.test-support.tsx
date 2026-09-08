@@ -9,6 +9,7 @@ const boardId = "00000000-0000-4000-8000-000000000011"
 
 export class TestEventSource {
   static current: TestEventSource | null = null
+  closed = false
   readonly listeners = new Map<string, EventListenerOrEventListenerObject>()
   onerror: ((event: Event) => void) | null = null
   onopen: ((event: Event) => void) | null = null
@@ -22,7 +23,7 @@ export class TestEventSource {
     this.listeners.set(type, listener)
   }
 
-  close(): void {}
+  close(): void { this.closed = true }
 
   emit(type: string, data?: string): void {
     const listener = this.listeners.get(type)
@@ -32,7 +33,7 @@ export class TestEventSource {
   }
 }
 
-export function renderDisplay(): void {
+export function renderDisplay(): QueryClient {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={client}>
@@ -41,6 +42,7 @@ export function renderDisplay(): void {
       </MemoryRouter>
     </QueryClientProvider>,
   )
+  return client
 }
 
 export function snapshotResponse(): Response {

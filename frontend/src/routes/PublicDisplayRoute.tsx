@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useParams } from "react-router-dom"
+import { ApiError } from "../api/errors.ts"
 import { FullViewCanvas } from "../features/boards/fullview/FullViewCanvas.tsx"
 import {
   claimPublicDisplay,
@@ -35,7 +36,7 @@ export function PublicDisplayRoute() {
     queryFn: () => claimPublicDisplay(shareToken),
     queryKey: ["public", "boards", shareToken, "display-claim"],
   })
-  const connected = claim.isSuccess && terminalMessage === null
+  const connected = claim.data !== undefined && terminalMessage === null
   const title = useQuery({
     enabled: connected,
     queryFn: () => fetchPublicDisplayTitle(shareToken),
@@ -56,6 +57,13 @@ export function PublicDisplayRoute() {
     refetchIntervalInBackground: true,
   })
   const backgroundUrl = useObjectUrl(background.data)
+  const claimTerminalMessage = claim.data === undefined
+    ? null
+    : claim.error instanceof PublicDisplayDeniedError
+      ? DISPLAY_ALREADY_CONNECTED_MESSAGE
+      : claim.error instanceof ApiError && claim.error.status === 404
+        ? DISPLAY_UNAVAILABLE_MESSAGE
+        : null
   const refetchSnapshot = useCallback(async () => {
     await Promise.all([snapshot.refetch(), background.refetch()])
   }, [background.refetch, snapshot.refetch])
@@ -89,12 +97,13 @@ export function PublicDisplayRoute() {
   }, [snapshot.data])
 
   useEffect(() => {
+    if (claimTerminalMessage !== null) terminateDisplay(claimTerminalMessage)
     if (
       title.error instanceof PublicDisplayUnavailableError
       || snapshot.error instanceof PublicDisplayUnavailableError
       || background.error instanceof PublicDisplayUnavailableError
     ) terminateDisplay(DISPLAY_UNAVAILABLE_MESSAGE)
-  }, [background.error, snapshot.error, terminateDisplay, title.error])
+  }, [background.error, claimTerminalMessage, snapshot.error, terminateDisplay, title.error])
 
   useEffect(() => {
     if (!connected) return
@@ -115,13 +124,13 @@ export function PublicDisplayRoute() {
   const definitelyUnavailable = title.error instanceof PublicDisplayUnavailableError
     || snapshot.error instanceof PublicDisplayUnavailableError
     || background.error instanceof PublicDisplayUnavailableError
-  if (terminalMessage !== null || definitelyUnavailable) return <main className="full-view-page full-view-page--public"><div className="full-view-canvas full-view-state" role="alert"><p>{terminalMessage ?? DISPLAY_UNAVAILABLE_MESSAGE}</p></div></main>
+  if (terminalMessage !== null || claimTerminalMessage !== null || definitelyUnavailable) return <main className="full-view-page full-view-page--public"><div className="full-view-canvas full-view-state" role="alert"><p>{terminalMessage ?? claimTerminalMessage ?? DISPLAY_UNAVAILABLE_MESSAGE}</p></div></main>
   if (claim.isPending) return <main className="full-view-page full-view-page--public"><div aria-busy="true" className="full-view-canvas full-view-state" role="status"><p>행사장 화면을 불러오는 중입니다.</p></div></main>
-  if (claim.error !== null) {
+  if (claim.error !== null && claim.data === undefined) {
     const message = claim.error instanceof PublicDisplayDeniedError ? DISPLAY_ALREADY_CONNECTED_MESSAGE : "행사장 화면을 불러오지 못했습니다."
     return <main className="full-view-page full-view-page--public"><div className="full-view-canvas full-view-state" role="alert"><p>{message}</p></div></main>
   }
-  const initialError = title.error !== null || (snapshot.error !== null && snapshot.data === undefined) || (background.error !== null && background.data === undefined)
+  const initialError = (title.error !== null && title.data === undefined) || (snapshot.error !== null && snapshot.data === undefined) || (background.error !== null && background.data === undefined)
   if (initialError) return <main className="full-view-page full-view-page--public"><div className="full-view-canvas full-view-state" role="alert"><p>행사장 화면을 불러오지 못했습니다.</p></div></main>
   const canvas = displaySnapshot === undefined || background.data === undefined
     ? <div aria-busy="true" className="full-view-canvas full-view-state" role="status"><p>행사장 화면을 불러오는 중입니다.</p></div>
