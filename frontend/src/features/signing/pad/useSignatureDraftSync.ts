@@ -113,12 +113,23 @@ export function useSignatureDraftSync({
     if (next === undefined) {
       return;
     }
+    let reflectedCount = 1;
+    const points = [...next.points];
+    if (next.operation === "begin" || next.operation === "append") {
+      for (const candidate of pendingRef.current.slice(1)) {
+        if (candidate.operation !== "append" || candidate.strokeIndex !== next.strokeIndex) {
+          break;
+        }
+        points.push(...candidate.points);
+        reflectedCount += 1;
+      }
+    }
     const sequence = sequenceRef.current + 1;
     const delta: SignatureDraftDelta = {
       clientSequence: sequence,
       draftEpoch: versionRef.current.draftEpoch,
       operation: next.operation,
-      points: next.points,
+      points,
       revision: versionRef.current.revision,
       strokeIndex: next.strokeIndex,
     };
@@ -131,7 +142,7 @@ export function useSignatureDraftSync({
             setFailure();
             return;
           }
-          pendingRef.current.shift();
+          pendingRef.current.splice(0, reflectedCount);
           sequenceRef.current = sequence;
           versionRef.current = saved;
         },
