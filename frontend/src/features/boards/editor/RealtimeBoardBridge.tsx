@@ -6,6 +6,6 @@ type RealtimeBoardBridgeProps = {
 }
 
 export function RealtimeBoardBridge({ boardId, refetchSnapshot }: RealtimeBoardBridgeProps) {
-  useBoardRealtime(boardId, refetchSnapshot)
+  useBoardRealtime(boardId, refetchSnapshot, { includeDrafts: false })
   return null
 }

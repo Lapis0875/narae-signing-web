@@ -74,7 +74,7 @@ final class PublicDraftRealtimeHttpTest {
     }
 
     @Test
-    void publicStreamGetsContiguousJsonDeltasWhileAdminGetsNoPointInvalidations() throws Exception {
+    void publicStreamGetsContiguousJsonDeltasWhileAdminGetsBodyFreeInvalidations() throws Exception {
         // Given
         var publicStream = publicStream();
         var adminStream = adminStream();
@@ -105,7 +105,7 @@ final class PublicDraftRealtimeHttpTest {
                         "\"operation\":\"end\"");
         var adminBody = adminStream.getResponse().getContentAsString();
         assertThat(adminBody).contains("event:signature-draft", "data:{}").doesNotContain("points");
-        assertThat(occurrences(adminBody, "event:signature-draft")).isOne();
+        assertThat(occurrences(adminBody, "event:signature-draft")).isEqualTo(4);
         System.out.println("PUBLIC_SSE\n" + publicBody + "ADMIN_SSE\n" + adminBody);
     }
 

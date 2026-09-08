@@ -52,7 +52,7 @@ it("publishes a cold first stroke progressively before pointerup", async () => {
     { x: 200_000, y: 200_000 },
     { x: 300_000, y: 300_000 },
   ]]);
-  expect(backend.operations).toEqual(["begin", "append", "append"]);
+  expect(backend.operations).toEqual(["begin", "append"]);
 });
 
 it("retries the cold empty baseline without folding an active stroke into it", async () => {
@@ -146,9 +146,16 @@ it("flushes coalesced points in order within 50 ms and serializes delta requests
   expect(onDraftDelta).toHaveBeenCalledTimes(1);
   expect(deltas[0]).toEqual(expect.objectContaining({
     operation: "begin",
-    points: [{ x: 100_000, y: 100_000 }],
+    points: [
+      { x: 100_000, y: 100_000 },
+      { x: 200_000, y: 200_000 },
+      { x: 300_000, y: 300_000 },
+    ],
   }));
+  dispatchPointer(canvas, "pointermove", 40, 40);
+  await act(async () => vi.advanceTimersByTimeAsync(50));
   expect(onDraftDelta).toHaveBeenCalledTimes(1);
+  expect(deltas[0]?.points).toHaveLength(3);
 
   first.resolve(version(0, 1));
   await act(async () => Promise.resolve());
@@ -157,8 +164,7 @@ it("flushes coalesced points in order within 50 ms and serializes delta requests
     clientSequence: 2,
     operation: "append",
     points: [
-      { x: 200_000, y: 200_000 },
-      { x: 300_000, y: 300_000 },
+      { x: 400_000, y: 400_000 },
     ],
     revision: 1,
   }));

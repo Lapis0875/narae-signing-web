@@ -126,51 +126,54 @@ export function reconnectDelay(attempt: number): number {
   return Math.min(4_000, 250 * 2 ** attempt)
 }
 
+type BoardRealtimeOptions = {
+  readonly refetchBackground?: () => Promise<unknown>
+  readonly includeDrafts?: boolean
+}
+
 function useRealtime(
   eventUrl: string,
   refetchSnapshot: () => Promise<unknown>,
-  enabled = true,
-  onDisplayReplaced?: () => void,
+  { refetchBackground, includeDrafts = true }: BoardRealtimeOptions = {},
 ): void {
   useEffect(() => {
-    if (!enabled || typeof EventSource === "undefined") return
+    if (typeof EventSource === "undefined") return
     let active = true
     let attempt = 0
     let source: EventSource | null = null
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-    let refresh: Promise<unknown> | null = null
-    let refreshQueued = false
-    let followup = false
-    const runRefetch = () => {
-      refreshQueued = false
-      if (!active) return
-      if (refresh !== null) {
-        followup = true
-        return
+    const coalesce = (fetch: () => Promise<unknown>) => {
+      let refresh: Promise<unknown> | null = null
+      let refreshQueued = false
+      let pending = false
+      const runRefetch = () => {
+        refreshQueued = false
+        if (!active) return
+        pending = false
+        refresh = fetch().finally(() => {
+          refresh = null
+          if (pending) refetch()
+        })
       }
-      refresh = refetchSnapshot().finally(() => {
-        refresh = null
-        if (followup) {
-          followup = false
-          refetch()
-        }
-      })
-    }
-    const refetch = () => {
-      if (refresh !== null) {
-        followup = true
-        return
+      const refetch = () => {
+        pending = true
+        if (refresh !== null || refreshQueued) return
+        refreshQueued = true
+        queueMicrotask(runRefetch)
       }
-      if (refreshQueued) return
-      refreshQueued = true
-      queueMicrotask(runRefetch)
+      return refetch
     }
+    const refreshSnapshot = coalesce(refetchSnapshot)
+    const refreshBackground = refetchBackground === undefined ? undefined : coalesce(refetchBackground)
     const connect = () => {
       if (!active) return
       source = new EventSource(eventUrl)
-      source.onopen = () => { attempt = 0; refetch() }
-      for (const type of EVENT_TYPES) source.addEventListener(type, refetch)
-      if (onDisplayReplaced !== undefined) source.addEventListener("display-replaced", onDisplayReplaced)
+      source.onopen = () => { attempt = 0; refreshSnapshot(); refreshBackground?.() }
+      for (const type of EVENT_TYPES) source.addEventListener(type, () => {
+        if (!includeDrafts && (type === "signature-draft" || type === "signature-draft-cleared")) return
+        refreshSnapshot()
+        if (!type.startsWith("signature-")) refreshBackground?.()
+      })
       source.onerror = () => {
         source?.close()
         source = null
@@ -185,11 +188,15 @@ function useRealtime(
       source?.close()
       if (reconnectTimer !== null) clearTimeout(reconnectTimer)
     }
-  }, [enabled, eventUrl, onDisplayReplaced, refetchSnapshot])
+  }, [eventUrl, includeDrafts, refetchBackground, refetchSnapshot])
 }
 
-export function useBoardRealtime(boardId: string, refetchSnapshot: () => Promise<unknown>): void {
-  useRealtime(`/api/v1/admin/boards/${boardId}/events`, refetchSnapshot)
+export function useBoardRealtime(
+  boardId: string,
+  refetchSnapshot: () => Promise<unknown>,
+  options: BoardRealtimeOptions = {},
+): void {
+  useRealtime(`/api/v1/admin/boards/${boardId}/events`, refetchSnapshot, options)
 }
 
 export function usePublicBoardRealtime(

@@ -5,6 +5,10 @@ import type {
 } from "../api/signatureDraftApi.ts";
 import type { SignaturePayload, SignaturePoint } from "./signaturePayload.ts";
 
+// Normalized points use at most 26 ASCII bytes including a comma; this leaves
+// over 12 KiB for metadata under BodyLimitFilter's 65,536-byte request cap.
+const MAX_BATCH_POINTS = 2_048;
+
 type PendingDelta = {
   readonly operation: SignatureDraftDelta["operation"];
   readonly points: readonly SignaturePoint[];
@@ -113,12 +117,27 @@ export function useSignatureDraftSync({
     if (next === undefined) {
       return;
     }
+    let reflectedCount = 1;
+    const points = [...next.points];
+    if (next.operation === "begin" || next.operation === "append") {
+      for (const candidate of pendingRef.current.slice(1)) {
+        if (
+          candidate.operation !== "append" ||
+          candidate.strokeIndex !== next.strokeIndex ||
+          points.length + candidate.points.length > MAX_BATCH_POINTS
+        ) {
+          break;
+        }
+        points.push(...candidate.points);
+        reflectedCount += 1;
+      }
+    }
     const sequence = sequenceRef.current + 1;
     const delta: SignatureDraftDelta = {
       clientSequence: sequence,
       draftEpoch: versionRef.current.draftEpoch,
       operation: next.operation,
-      points: next.points,
+      points,
       revision: versionRef.current.revision,
       strokeIndex: next.strokeIndex,
     };
@@ -131,7 +150,7 @@ export function useSignatureDraftSync({
             setFailure();
             return;
           }
-          pendingRef.current.shift();
+          pendingRef.current.splice(0, reflectedCount);
           sequenceRef.current = sequence;
           versionRef.current = saved;
         },
