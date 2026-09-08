@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type {
   SignatureDraftDelta,
@@ -7,69 +7,110 @@ import type {
 } from "../api/signatureDraftApi.ts";
 import { SignaturePad } from "./SignaturePad.tsx";
 import type { SignaturePayload } from "./signaturePayload.ts";
+import {
+  ColdDraftContract,
+  deferred,
+  dispatchPointer,
+  prepareCanvas,
+  setupSignaturePadTestEnvironment,
+  teardownSignaturePadTestEnvironment,
+  version,
+} from "./signaturePadTestSupport.ts";
 
-type Deferred<T> = {
-  readonly promise: Promise<T>;
-  readonly resolve: (value: T) => void;
-};
+beforeEach(setupSignaturePadTestEnvironment);
+afterEach(teardownSignaturePadTestEnvironment);
 
-function deferred<T>(): Deferred<T> {
-  let resolve: (value: T) => void = () => {};
-  const promise = new Promise<T>((promiseResolve) => {
-    resolve = promiseResolve;
-  });
-  return { promise, resolve };
-}
-
-function version(draftEpoch: number, revision: number): SignatureDraftVersion {
-  return { draftEpoch, revision };
-}
-
-function prepareCanvas() {
-  const canvas = screen.getByTestId("signer-canvas");
-  Object.defineProperties(canvas, {
-    hasPointerCapture: { configurable: true, value: () => false },
-    setPointerCapture: { configurable: true, value: () => undefined },
-  });
-  vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(
-    new DOMRect(0, 0, 100, 100),
+it("publishes a cold first stroke progressively before pointerup", async () => {
+  // Given
+  const backend = new ColdDraftContract();
+  const initial = deferred<void>();
+  render(
+    <SignaturePad
+      onDraft={async (payload) => {
+        await initial.promise;
+        return backend.put(payload);
+      }}
+      onDraftDelta={backend.delta}
+      onSubmit={vi.fn(() => Promise.resolve(true))}
+    />,
   );
-  return canvas;
-}
+  const canvas = prepareCanvas();
 
-function dispatchPointer(
-  canvas: HTMLElement,
-  type: "pointerdown" | "pointermove" | "pointerup",
-  clientX: number,
-  clientY: number,
-  coalesced: readonly { readonly clientX: number; readonly clientY: number }[] = [],
-) {
-  const event = new Event(type, { bubbles: true, cancelable: true });
-  Object.defineProperties(event, {
-    button: { value: 0 },
-    clientX: { value: clientX },
-    clientY: { value: clientY },
-    getCoalescedEvents: { value: () => coalesced },
-    isPrimary: { value: true },
-    pointerId: { value: 1 },
-  });
-  fireEvent(canvas, event);
-}
+  // When
+  dispatchPointer(canvas, "pointerdown", 10, 10);
+  dispatchPointer(canvas, "pointermove", 20, 20);
+  await act(async () => vi.advanceTimersByTimeAsync(50));
+  expect(backend.strokes).toEqual([]);
+  initial.resolve(undefined);
+  await act(async () => Promise.resolve());
+  dispatchPointer(canvas, "pointermove", 30, 30);
+  await act(async () => vi.advanceTimersByTimeAsync(50));
 
-beforeEach(() => {
-  vi.useFakeTimers();
-  vi.stubGlobal("ResizeObserver", class {
-    observe() {}
-    disconnect() {}
-  });
-  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  // Then
+  expect(backend.strokes).toEqual([[
+    { x: 100_000, y: 100_000 },
+    { x: 200_000, y: 200_000 },
+    { x: 300_000, y: 300_000 },
+  ]]);
+  expect(backend.operations).toEqual(["begin", "append", "append"]);
 });
 
-afterEach(() => {
-  cleanup();
-  vi.useRealTimers();
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
+it("retries the cold empty baseline without folding an active stroke into it", async () => {
+  // Given
+  const backend = new ColdDraftContract();
+  const fullPayloads: SignaturePayload[] = [];
+  const onDraft = vi.fn((payload: SignaturePayload) => {
+    fullPayloads.push(payload);
+    return fullPayloads.length === 1 ? Promise.resolve(null) : backend.put(payload);
+  });
+  render(
+    <SignaturePad
+      onDraft={onDraft}
+      onDraftDelta={backend.delta}
+      onSubmit={vi.fn(() => Promise.resolve(true))}
+    />,
+  );
+  const canvas = prepareCanvas();
+
+  // When
+  dispatchPointer(canvas, "pointerdown", 10, 10);
+  dispatchPointer(canvas, "pointermove", 20, 20);
+  await act(async () => vi.advanceTimersByTimeAsync(50));
+
+  // Then
+  expect(fullPayloads).toEqual([
+    { strokes: [], version: 1 },
+    { strokes: [], version: 1 },
+  ]);
+  expect(backend.strokes).toEqual([[
+    { x: 100_000, y: 100_000 },
+    { x: 200_000, y: 200_000 },
+  ]]);
+});
+
+it("does not drain held-stroke deltas after unmounting during initialization", async () => {
+  // Given
+  const initial = deferred<SignatureDraftVersion | null>();
+  const onDraftDelta = vi.fn(() => Promise.resolve(version(1, 1)));
+  const rendered = render(
+    <SignaturePad
+      onDraft={() => initial.promise}
+      onDraftDelta={onDraftDelta}
+      onSubmit={vi.fn(() => Promise.resolve(true))}
+    />,
+  );
+  const canvas = prepareCanvas();
+  dispatchPointer(canvas, "pointerdown", 10, 10);
+  dispatchPointer(canvas, "pointermove", 20, 20);
+  await act(async () => vi.advanceTimersByTimeAsync(50));
+
+  // When
+  rendered.unmount();
+  initial.resolve(version(1, 0));
+  await act(async () => Promise.resolve());
+
+  // Then
+  expect(onDraftDelta).not.toHaveBeenCalled();
 });
 
 it("flushes coalesced points in order within 50 ms and serializes delta requests", async () => {
@@ -130,7 +171,10 @@ it("retains failed deltas until a full reset succeeds then resumes newer points"
   const deltas: SignatureDraftDelta[] = [];
   const onDraft = vi.fn((payload: SignaturePayload) => {
     fullPayloads.push(payload);
-    return fullPayloads.length === 1 ? Promise.resolve(null) : reset.promise;
+    if (fullPayloads.length === 1) {
+      return Promise.resolve(version(2, 0));
+    }
+    return fullPayloads.length === 2 ? Promise.resolve(null) : reset.promise;
   });
   const onDraftDelta = vi.fn((delta: SignatureDraftDelta) => {
     deltas.push(delta);
@@ -155,11 +199,11 @@ it("retains failed deltas until a full reset succeeds then resumes newer points"
   dispatchPointer(canvas, "pointermove", 30, 30);
 
   // Then
-  expect(onDraft).not.toHaveBeenCalled();
+  expect(onDraft).toHaveBeenCalledTimes(1);
   dispatchPointer(canvas, "pointerup", 30, 30);
   await act(async () => vi.advanceTimersByTimeAsync(0));
-  expect(onDraft).toHaveBeenCalledTimes(1);
-  expect(fullPayloads[0]?.strokes[0]?.points).toEqual([
+  expect(onDraft).toHaveBeenCalledTimes(2);
+  expect(fullPayloads[1]?.strokes[0]?.points).toEqual([
     { x: 100_000, y: 100_000 },
     { x: 200_000, y: 200_000 },
     { x: 300_000, y: 300_000 },
@@ -170,13 +214,13 @@ it("retains failed deltas until a full reset succeeds then resumes newer points"
   dispatchPointer(canvas, "pointerdown", 40, 40);
   dispatchPointer(canvas, "pointerup", 50, 50);
   await act(async () => vi.advanceTimersByTimeAsync(0));
-  expect(onDraft).toHaveBeenCalledTimes(2);
-  expect(fullPayloads[1]?.strokes.map((stroke) => stroke.points.length)).toEqual([3, 2]);
+  expect(onDraft).toHaveBeenCalledTimes(3);
+  expect(fullPayloads[2]?.strokes.map((stroke) => stroke.points.length)).toEqual([3, 2]);
 
   dispatchPointer(canvas, "pointerdown", 60, 60);
 
   reset.resolve(version(4, 0));
-  await act(async () => Promise.resolve());
+  await act(async () => vi.advanceTimersByTimeAsync(50));
   expect(onDraftDelta).toHaveBeenCalledTimes(2);
   expect(deltas[1]).toEqual({
     clientSequence: 1,
@@ -201,8 +245,8 @@ it("sends a full draft heartbeat every 20 seconds", async () => {
 
   // When / Then
   await act(async () => vi.advanceTimersByTimeAsync(19_999));
-  expect(onDraft).not.toHaveBeenCalled();
-  await act(async () => vi.advanceTimersByTimeAsync(1));
   expect(onDraft).toHaveBeenCalledTimes(1);
+  await act(async () => vi.advanceTimersByTimeAsync(1));
+  expect(onDraft).toHaveBeenCalledTimes(2);
   expect(onDraft).toHaveBeenCalledWith({ strokes: [], version: 1 });
 });

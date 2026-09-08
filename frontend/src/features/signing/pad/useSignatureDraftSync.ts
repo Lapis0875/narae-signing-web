@@ -33,11 +33,14 @@ export function useSignatureDraftSync({
   stopping,
 }: DraftSyncOptions) {
   const pendingRef = useRef<PendingDelta[]>([]);
+  const mountedRef = useRef(false);
   const requestRef = useRef<Promise<void> | null>(null);
   const sendingRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recoveryRef = useRef(false);
   const fullSyncRef = useRef(false);
+  const initialSyncRef = useRef(true);
+  const initialPayloadRef = useRef<SignaturePayload>({ strokes: [], version: 1 });
   const sequenceRef = useRef(0);
   const versionRef = useRef<SignatureDraftVersion>({ draftEpoch: 0, revision: 0 });
 
@@ -46,22 +49,25 @@ export function useSignatureDraftSync({
       sendFull === undefined ||
       sendDelta === undefined ||
       sendingRef.current ||
+      !mountedRef.current ||
       stopping.current
     ) {
       return;
     }
-    const sendAuthoritative = recoveryRef.current || fullSyncRef.current;
+    const sendAuthoritative = initialSyncRef.current || recoveryRef.current || fullSyncRef.current;
     const next = pendingRef.current[0];
     if (!sendAuthoritative && next === undefined) {
       return;
     }
-    if (sendAuthoritative && !readyForFull()) {
+    if (sendAuthoritative && !initialSyncRef.current && !readyForFull()) {
       return;
     }
     sendingRef.current = true;
     if (sendAuthoritative) {
-      const currentPayload = payload();
-      const reflectedCount = pendingRef.current.length;
+      const currentPayload = initialSyncRef.current
+        ? initialPayloadRef.current
+        : payload();
+      const reflectedCount = initialSyncRef.current ? 0 : pendingRef.current.length;
       if (currentPayload === null) {
         setFailure();
         sendingRef.current = false;
@@ -78,6 +84,7 @@ export function useSignatureDraftSync({
             pendingRef.current.splice(0, reflectedCount);
             versionRef.current = saved;
             sequenceRef.current = 0;
+            initialSyncRef.current = false;
             recoveryRef.current = false;
             fullSyncRef.current = false;
           },
@@ -85,7 +92,13 @@ export function useSignatureDraftSync({
         )
         .then(() => {
           sendingRef.current = false;
-          if (!recoveryRef.current && !fullSyncRef.current) {
+          if (
+            !initialSyncRef.current &&
+            !recoveryRef.current &&
+            !fullSyncRef.current &&
+            mountedRef.current &&
+            timerRef.current === null
+          ) {
             queueMicrotask(flush);
           }
         });
@@ -158,9 +171,17 @@ export function useSignatureDraftSync({
   }, [flush]);
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (sendFull === undefined || sendDelta === undefined) {
       return;
     }
+    flush();
     const heartbeat = setInterval(() => {
       fullSyncRef.current = true;
       flush();
