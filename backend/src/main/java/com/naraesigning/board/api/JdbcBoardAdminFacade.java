@@ -96,7 +96,8 @@ final class JdbcBoardAdminFacade implements BoardAdminFacade {
     }
 
     @Override public BoardShare reissueShare(BoardOwner owner, UUID boardId) {
-        return boards.reissueShare(owner, boardId);
+        return boards.reissueShare(owner, boardId,
+                () -> publishAfterCommit(new BoardMutationEvent(boardId, "share-reissued")));
     }
 
     @Override

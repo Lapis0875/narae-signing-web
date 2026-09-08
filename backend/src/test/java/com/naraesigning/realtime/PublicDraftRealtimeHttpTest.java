@@ -44,6 +44,7 @@ final class PublicDraftRealtimeHttpTest {
     private BoardRealtimeRegistry adminRealtime;
     private PublicBoardRealtimeRegistry publicRealtime;
     private LiveSignatureRegistry live;
+    private BoardService boards;
     private MockMvc publicMvc;
     private MockMvc adminMvc;
     private Cookie owner;
@@ -54,7 +55,7 @@ final class PublicDraftRealtimeHttpTest {
         publicRealtime = new PublicBoardRealtimeRegistry();
         live = new LiveSignatureRegistry(JSON, Clock.fixed(NOW, ZoneOffset.UTC), adminRealtime, publicRealtime);
 
-        var boards = mock(BoardService.class);
+        boards = mock(BoardService.class);
         var snapshots = mock(BoardSnapshotService.class);
         when(boards.findPublic(TOKEN)).thenReturn(Optional.of(new PublicBoardLink(BOARD, "Board", "OPEN", 1)));
         when(boards.findPublic(OTHER_TOKEN)).thenReturn(Optional.of(
@@ -187,6 +188,25 @@ final class PublicDraftRealtimeHttpTest {
         assertThat(stream.getResponse().getContentAsString()).contains(":heartbeat");
         publicMvc.perform(get(path("snapshot")).cookie(owner))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void shareReissueDisconnectsOldPublicStreamBeforeFutureDraftPublication() throws Exception {
+        // Given
+        var oldStream = publicStream();
+        var before = oldStream.getResponse().getContentAsString();
+
+        // When
+        when(boards.findPublic(TOKEN)).thenReturn(Optional.empty());
+        new BoardEventForwarder(adminRealtime, publicRealtime)
+                .forward(new BoardMutationEvent(BOARD, "share-reissued"));
+        live.update(BOARD, SLOT, CLAIM, bytes(payload(1, 2)), NOW.plusSeconds(90));
+
+        // Then
+        assertThat(publicRealtime.connectionCount()).isZero();
+        assertThat(oldStream.getResponse().getContentAsString()).isEqualTo(before);
+        System.out.println("MOCKMVC_SHARE_REISSUE initialStatus=" + oldStream.getResponse().getStatus()
+                + " oldStreamConnections=0 futureDraftDelivered=false");
     }
 
     private MvcResult publicStream() throws Exception {

@@ -59,6 +59,10 @@ public final class BoardService {
     }
 
     public BoardShare reissueShare(BoardOwner owner, UUID boardId) {
+        return reissueShare(owner, boardId, () -> {});
+    }
+
+    public BoardShare reissueShare(BoardOwner owner, UUID boardId, Runnable afterReplaced) {
         return transactions.execute(status -> {
             var current = repository.lockShare(owner, boardId)
                     .orElseThrow(BoardUnavailableException::new);
@@ -69,6 +73,7 @@ public final class BoardService {
             var issued = BoardShareToken.issue(boardId, nextVersion, crypto);
             repository.replaceShare(owner, boardId, current.share().version(), issued.stored())
                     .orElseThrow(BoardUnavailableException::new);
+            afterReplaced.run();
             return new BoardShare(nextVersion, issued.rawToken());
         });
     }

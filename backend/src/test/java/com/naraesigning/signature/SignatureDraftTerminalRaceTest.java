@@ -76,6 +76,18 @@ class SignatureDraftTerminalRaceTest {
     }
 
     @Test
+    void delayedFirstClearCannotCacheEmptyDraftAfterBoardCloseAndReopen() throws Exception {
+        assertTerminalInvalidationRejectsDelayedFirstClear(registry ->
+                registry.invalidateBoard(new BoardLifecycleEvent(BOARD_ID, "CLOSED")), "close");
+    }
+
+    @Test
+    void delayedFirstClearCannotCacheEmptyDraftAfterBoardDeletionCompletes() throws Exception {
+        assertTerminalInvalidationRejectsDelayedFirstClear(
+                registry -> registry.invalidateBoard(BOARD_ID), "delete");
+    }
+
+    @Test
     void unrelatedBoardInvalidationDoesNotRejectPendingFirstFullPut() throws Exception {
         // Given
         var repository = new PausingRepository();
@@ -101,6 +113,38 @@ class SignatureDraftTerminalRaceTest {
             assertThat(delayedPut.get()).isNull();
             assertThat(registry.snapshot(BOARD_ID, SLOT_ID).signature()).isNotNull();
             System.out.println("RACE unrelatedBoard delayedPut=accepted finalDraft=visible");
+        } finally {
+            repository.resume.countDown();
+        }
+    }
+
+    @Test
+    void unrelatedBoardInvalidationDoesNotRejectPendingFirstClear() throws Exception {
+        // Given
+        var repository = new PausingRepository();
+        var registry = registry();
+        var service = new LiveSignatureService(repository, registry);
+        repository.pauseAfterAuthorization();
+
+        // When
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var delayedClear = workers.submit(() -> {
+                try {
+                    service.clearDraft(session(), CLAIM_ID, NOW.plusSeconds(1));
+                    return null;
+                } catch (SignatureSubmitException exception) {
+                    return exception;
+                }
+            });
+            assertThat(repository.authorized.await(5, TimeUnit.SECONDS)).isTrue();
+            registry.invalidateBoard(OTHER_BOARD_ID);
+            repository.resume.countDown();
+
+            // Then
+            assertThat(delayedClear.get()).isNull();
+            assertThat(registry.snapshot(BOARD_ID, SLOT_ID).signature())
+                    .isEqualTo(new ObjectMapper().readTree("{\"version\":1,\"strokes\":[]}"));
+            System.out.println("RACE unrelatedBoard delayedClear=accepted emptyDraft=visible");
         } finally {
             repository.resume.countDown();
         }
@@ -136,6 +180,40 @@ class SignatureDraftTerminalRaceTest {
             assertThat(service.update(session(), CLAIM_ID, payload(5, 6), NOW.plusSeconds(2))).isNotNull();
             assertThat(registry.snapshot(BOARD_ID, SLOT_ID).signature()).isNotNull();
             System.out.printf("RACE %s stalePut=signature_draft_out_of_sync staleDraft=absent freshPut=accepted%n",
+                    terminalAction);
+        } finally {
+            repository.resume.countDown();
+        }
+    }
+
+    private static void assertTerminalInvalidationRejectsDelayedFirstClear(
+            Consumer<LiveSignatureRegistry> invalidate, String terminalAction) throws Exception {
+        var repository = new PausingRepository();
+        var registry = registry();
+        var service = new LiveSignatureService(repository, registry);
+        repository.pauseAfterAuthorization();
+
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var delayedClear = workers.submit(() -> {
+                try {
+                    service.clearDraft(session(), CLAIM_ID, NOW.plusSeconds(1));
+                    return null;
+                } catch (SignatureSubmitException exception) {
+                    return exception;
+                }
+            });
+            assertThat(repository.authorized.await(5, TimeUnit.SECONDS)).isTrue();
+            registry.fenceBoard(BOARD_ID);
+            invalidate.accept(registry);
+            registry.unfenceBoard(BOARD_ID);
+            repository.resume.countDown();
+
+            assertThat(delayedClear.get())
+                    .isNotNull()
+                    .extracting(SignatureSubmitException::code)
+                    .isEqualTo("signature_draft_out_of_sync");
+            assertThat(registry.snapshot(BOARD_ID, SLOT_ID).signature()).isNull();
+            System.out.printf("RACE %s staleClear=signature_draft_out_of_sync finalDraft=absent%n",
                     terminalAction);
         } finally {
             repository.resume.countDown();

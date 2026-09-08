@@ -63,8 +63,8 @@ class LiveSignatureServiceTest {
     void clearsTheVisibleDraftButKeepsTheCurrentSignerLease() {
         var repository = new MemoryRepository();
         var drafts = mock(LiveSignatureRegistry.class);
-        when(drafts.beginFullUpdate(BOARD_ID, SLOT_ID))
-                .thenReturn(mock(LiveSignatureRegistry.FullUpdate.class));
+        var fullUpdate = mock(LiveSignatureRegistry.FullUpdate.class);
+        when(drafts.beginFullUpdate(BOARD_ID, SLOT_ID)).thenReturn(fullUpdate);
         var service = new LiveSignatureService(repository, drafts);
         var claim = UUID.randomUUID();
         service.update(session(), claim, payload(), NOW);
@@ -74,8 +74,8 @@ class LiveSignatureServiceTest {
         assertThat(repository.state.activeSignerClaim()).isEqualTo(claim);
         assertThat(repository.state.activeSignerClaimExpiresAt())
                 .isEqualTo(NOW.plusSeconds(10).plus(LiveSignatureService.LEASE_DURATION));
-        verify(drafts).clear(
-                BOARD_ID, SLOT_ID, claim, NOW.plusSeconds(10).plus(LiveSignatureService.LEASE_DURATION));
+        verify(drafts).clear(BOARD_ID, SLOT_ID, claim,
+                NOW.plusSeconds(10).plus(LiveSignatureService.LEASE_DURATION), fullUpdate);
     }
 
     private static SignatureSession session() {

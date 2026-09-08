@@ -17,7 +17,8 @@ final class BoardEventForwarderTest {
         var forwarder = new BoardEventForwarder(registry);
 
         for (var type : new String[] {
-                "background-updated", "board-deleted", "board-updated", "layout-updated", "signature-reset"
+                "background-updated", "board-deleted", "board-updated", "layout-updated", "share-reissued",
+                "signature-reset"
         }) {
             forwarder.forward(new BoardMutationEvent(boardId, type));
             verify(registry).publish(boardId, type);

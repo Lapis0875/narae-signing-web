@@ -75,15 +75,23 @@ final class LiveSignatureService {
         if (!session.active()) throw SignatureSubmitException.sessionExpired();
         if (claimId == null) return;
         var signer = session.value();
-        var cleared = repository.withBoardThenSlotLocked(signer.boardId(), signer.slotId(), (state, writer) -> {
-            SignatureSubmitService.validate(signer, state);
-            SignatureSubmitService.validateClaim(state, claimId, now);
-            if (!claimId.equals(state.activeSignerClaim())) return false;
-            writer.renewClaim(claimId, now.plus(LEASE_DURATION));
-            return true;
-        });
-        if (cleared) {
-            drafts.clear(signer.boardId(), signer.slotId(), claimId, now.plus(LEASE_DURATION));
+        try {
+            try (var clear = drafts.beginFullUpdate(signer.boardId(), signer.slotId())) {
+                var cleared = repository.withBoardThenSlotLocked(
+                        signer.boardId(), signer.slotId(), (state, writer) -> {
+                            SignatureSubmitService.validate(signer, state);
+                            SignatureSubmitService.validateClaim(state, claimId, now);
+                            if (!claimId.equals(state.activeSignerClaim())) return false;
+                            writer.renewClaim(claimId, now.plus(LEASE_DURATION));
+                            return true;
+                        });
+                if (cleared) {
+                    drafts.clear(signer.boardId(), signer.slotId(), claimId,
+                            now.plus(LEASE_DURATION), clear);
+                }
+            }
+        } catch (LiveSignatureRegistry.OutOfSyncException exception) {
+            throw SignatureSubmitException.draftOutOfSync();
         }
     }
 

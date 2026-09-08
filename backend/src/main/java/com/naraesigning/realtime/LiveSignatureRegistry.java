@@ -176,6 +176,12 @@ public final class LiveSignatureRegistry {
         reset(boardId, slotId, claimId, true, expiresAt, false);
     }
 
+    public synchronized void clear(
+            UUID boardId, UUID slotId, UUID claimId, Instant expiresAt, FullUpdate fullUpdate) {
+        ensureCurrent(boardId, slotId, fullUpdate);
+        reset(boardId, slotId, claimId, true, expiresAt, false);
+    }
+
     public void cancel(UUID boardId, UUID slotId, UUID claimId) {
         reset(boardId, slotId, claimId, false, null, true);
     }
