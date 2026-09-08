@@ -6,14 +6,27 @@ type AuthSessionResponse =
 
 type AuthSessionProbe = {
   readonly fulfilledBodies: AuthSessionResponse[];
+  readonly csrfTokens: string[];
+  readonly identifyBodies: string[];
   readonly requests: string[];
+  readonly signerRequests: string[];
   readonly unexpectedApiRequests: string[];
 };
 
 const authSessionPath = "/api/v1/auth/session";
 const boardId = "11111111-1111-4111-8111-111111111111";
 const publicLinkPath = "/api/v1/public/links/share-1";
+const publicIdentifyPath = `${publicLinkPath}/identify`;
 const signingSessionPath = "/api/v1/public/signing-session";
+const signerIdentity = {
+  organization: "나래미디어",
+  job: "부장",
+  name: "홍길동",
+} as const;
+const signingSessionResponse = {
+  signatureAspectRatio: 1.777778,
+  state: "READY",
+} as const;
 const boardDetail = {
   canvasHeight: 1080,
   canvasWidth: 1920,
@@ -30,6 +43,13 @@ async function mockApi(
   sessionResponse: AuthSessionResponse | undefined,
   probe: AuthSessionProbe,
 ): Promise<void> {
+  await page.context().addCookies([
+    {
+      name: "XSRF-TOKEN",
+      url: "http://127.0.0.1:4173/",
+      value: "route-fixture-csrf",
+    },
+  ]);
   await page.addInitScript(() => {
     class QaEventSource {
       onerror: (() => void) | null = null;
@@ -63,10 +83,20 @@ async function mockApi(
         body: JSON.stringify({ state: "OPEN", title: "서명하기" }),
       });
     }
-    if (pathname === signingSessionPath && request.method() === "GET") {
+    if (pathname === publicIdentifyPath && request.method() === "POST") {
+      probe.csrfTokens.push((await request.headerValue("x-xsrf-token")) ?? "");
+      probe.identifyBodies.push(request.postData() ?? "");
+      probe.signerRequests.push(`${request.method()} ${pathname}`);
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify({ state: "READY" }),
+        body: JSON.stringify({ identified: true }),
+      });
+    }
+    if (pathname === signingSessionPath && request.method() === "GET") {
+      probe.signerRequests.push(`${request.method()} ${pathname}`);
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(signingSessionResponse),
       });
     }
     if (pathname === "/api/v1/admin/boards" && request.method() === "GET") {
@@ -145,8 +175,11 @@ test.describe("@route-shell", () => {
   test("fails closed for an unknown API request", async ({ page }) => {
     // Given
     const probe: AuthSessionProbe = {
+      csrfTokens: [],
       fulfilledBodies: [],
+      identifyBodies: [],
       requests: [],
+      signerRequests: [],
       unexpectedApiRequests: [],
     };
     await mockApi(page, { authenticated: false, expiresAt: null }, probe);
@@ -169,8 +202,11 @@ test.describe("@route-shell", () => {
   }) => {
     // Given
     const probe: AuthSessionProbe = {
+      csrfTokens: [],
       fulfilledBodies: [],
+      identifyBodies: [],
       requests: [],
+      signerRequests: [],
       unexpectedApiRequests: [],
     };
     await mockApi(page, { authenticated: false, expiresAt: null }, probe);
@@ -194,8 +230,11 @@ test.describe("@route-shell", () => {
     }, testInfo) => {
       // Given
       const probe: AuthSessionProbe = {
+        csrfTokens: [],
         fulfilledBodies: [],
+        identifyBodies: [],
         requests: [],
+        signerRequests: [],
         unexpectedApiRequests: [],
       };
       const consoleErrors: string[] = [];
@@ -225,7 +264,12 @@ test.describe("@route-shell", () => {
         page.getByRole("heading", { level: 1, name: route.title }),
       ).toBeVisible();
       if (route.auth === "public") {
+        await page.getByLabel("소속사 (선택)").fill(signerIdentity.organization);
+        await page.getByLabel("직책 (선택)").fill(signerIdentity.job);
+        await page.getByLabel("이름").fill(signerIdentity.name);
+        await page.getByRole("button", { name: "정보 확인" }).click();
         await expect(page.getByTestId("signer-canvas")).toBeVisible();
+        await expect(page.locator(".public-signer__proportional-pad")).toBeVisible();
         await page.waitForLoadState("networkidle");
         await page.evaluate(async () => {
           await new Promise<void>((resolve) =>
@@ -250,6 +294,12 @@ test.describe("@route-shell", () => {
       } else {
         expect(probe.requests).toHaveLength(0);
         expect(probe.fulfilledBodies).toHaveLength(0);
+        expect(probe.csrfTokens).toEqual(["route-fixture-csrf"]);
+        expect(probe.identifyBodies).toEqual([JSON.stringify(signerIdentity)]);
+        expect(probe.signerRequests).toEqual([
+          `POST ${publicIdentifyPath}`,
+          `GET ${signingSessionPath}`,
+        ]);
       }
       expect(probe.unexpectedApiRequests).toEqual([]);
       if (route.auth === "public") {
@@ -269,8 +319,11 @@ test.describe("@route-shell", () => {
   }, testInfo) => {
     // Given
     const probe: AuthSessionProbe = {
+      csrfTokens: [],
       fulfilledBodies: [],
+      identifyBodies: [],
       requests: [],
+      signerRequests: [],
       unexpectedApiRequests: [],
     };
     await mockApi(page, undefined, probe);

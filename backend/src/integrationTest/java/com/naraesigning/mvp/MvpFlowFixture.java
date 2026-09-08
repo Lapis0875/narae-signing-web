@@ -91,9 +91,15 @@ final class MvpFlowFixture {
     static <S extends Session> MockHttpServletRequestBuilder signer(
             MockHttpServletRequestBuilder request, UUID slotId, long revision, double aspect,
             SessionRepository<S> sessions) {
+        return signer(request, slotId, revision, aspect, sessions, Duration.ofHours(2));
+    }
+
+    static <S extends Session> MockHttpServletRequestBuilder signer(
+            MockHttpServletRequestBuilder request, UUID slotId, long revision, double aspect,
+            SessionRepository<S> sessions, Duration maximumLifetime) {
         return request.cookie(sessionCookie(sessions, "SIGNER_SESSION",
                         session -> SignerSessionContract.issue(session, new SignerSessionContract.Value(
-                                BOARD, slotId, 1, revision, aspect, NOW.minusSeconds(60)))))
+                                BOARD, slotId, 1, revision, aspect, NOW.minusSeconds(60)), maximumLifetime)))
                 .cookie(new jakarta.servlet.http.Cookie(CsrfTokenContract.COOKIE_NAME, CSRF))
                 .header(CsrfTokenContract.HEADER_NAME, CSRF)
                 .secure(true);

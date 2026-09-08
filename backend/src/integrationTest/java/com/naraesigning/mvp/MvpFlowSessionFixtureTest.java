@@ -13,6 +13,7 @@ import jakarta.servlet.Filter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Arrays;
@@ -95,7 +96,9 @@ final class MvpFlowSessionFixtureTest {
         // Given: the fixture persists a signer contract in the session repository.
         var sessions = sessions();
         var sessionFilter = sessionFilter(sessions);
-        var request = MvpFlowFixture.signer(get("/api/v1/public/probe"), SLOT, 1, 4d / 3d, sessions)
+        var maximumLifetime = Duration.ofMinutes(37);
+        var request = MvpFlowFixture.signer(get("/api/v1/public/probe"), SLOT, 1, 4d / 3d,
+                        sessions, maximumLifetime)
                 .buildRequest(new MockServletContext());
         var response = new MockHttpServletResponse();
         var resolved = new AtomicReference<SignatureSession>();
@@ -113,7 +116,7 @@ final class MvpFlowSessionFixtureTest {
         assertThat(resolved.get()).isEqualTo(new SignatureSession(new SignerSessionContract.Value(
                 BOARD, SLOT, 1, 1, 4d / 3d, NOW.minusSeconds(60)), true));
         assertThat(resolvedSession.get().getMaxInactiveInterval())
-                .isEqualTo(SignerSessionContract.MAXIMUM_LIFETIME.toSeconds());
+                .isEqualTo(maximumLifetime.toSeconds());
         assertThat(Arrays.stream(request.getCookies()).map(cookie -> cookie.getName()))
                 .contains("SIGNER_SESSION")
                 .doesNotContain("ADMIN_SESSION");

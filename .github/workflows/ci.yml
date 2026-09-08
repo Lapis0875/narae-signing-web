@@ -22,7 +22,7 @@ jobs:
         working-directory: frontend
         run: |
           npm ci
-          npx playwright install chromium webkit
+          npx playwright install --with-deps chromium webkit
           npm exec biome lint .
           npm exec -- tsc -b --pretty false
           npm run test
@@ -50,7 +50,7 @@ jobs:
         run: |
           ci_root=$(mktemp -d)
           ci_project="narae-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          trap 'docker compose -p "$ci_project" -f infra/compose/compose.yml down --volumes --remove-orphans || true; rm -rf "$ci_root"' EXIT
+          trap 'docker compose -p "$ci_project" -f infra/compose/compose.yml -f infra/compose/compose.ci.yml down --volumes --remove-orphans || true; rm -rf "$ci_root"' EXIT
           mkdir -p "$ci_root/secrets"
           dd if=/dev/zero of="$ci_root/secrets/master.key" bs=32 count=1 status=none
           export POSTGRES_DB=ci_database
@@ -63,8 +63,8 @@ jobs:
           export APP_CRYPTO_KEY_VERSION=1
           export NARAE_DATA_ROOT="$ci_root"
           export FRONTEND_PORT=8080
-          docker compose -p "$ci_project" -f infra/compose/compose.yml config --quiet
-          COMPOSE_FILE=infra/compose/compose.yml COMPOSE_PROJECT_NAME="$ci_project" ./scripts/test-compose-resources.sh
+          docker compose -p "$ci_project" -f infra/compose/compose.yml -f infra/compose/compose.ci.yml config --quiet
+          COMPOSE_FILE=infra/compose/compose.yml CI_COMPOSE_FILE=infra/compose/compose.ci.yml COMPOSE_PROJECT_NAME="$ci_project" ./scripts/test-compose-resources.sh
 
   workflow-lint:
     runs-on: ubuntu-latest
