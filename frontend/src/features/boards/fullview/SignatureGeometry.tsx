@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef } from "react"
+import { memo, useCallback, useEffect, useRef } from "react"
 import { calculatePreviewLineWidth, drawStroke } from "../../signing/pad/canvasRenderer.ts"
 import type { SignaturePayload } from "../../signing/pad/signaturePayload.ts"
 
 type SignatureGeometryProps = { readonly signature: SignaturePayload }
 
-export function SignatureGeometry({ signature }: SignatureGeometryProps) {
+export const SignatureGeometry = memo(function SignatureGeometry({ signature }: SignatureGeometryProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const redraw = useCallback(() => {
     const canvas = canvasRef.current
@@ -17,7 +17,7 @@ export function SignatureGeometry({ signature }: SignatureGeometryProps) {
     canvas.height = Math.round(height * density)
     context.setTransform(density, 0, 0, density, 0, 0)
     context.clearRect(0, 0, width, height)
-    context.strokeStyle = getComputedStyle(canvas).color
+    context.strokeStyle = "#000000"
     context.lineCap = "round"
     context.lineJoin = "round"
     context.lineWidth = calculatePreviewLineWidth(width, height)
@@ -34,4 +34,4 @@ export function SignatureGeometry({ signature }: SignatureGeometryProps) {
   }, [redraw])
 
   return <canvas aria-label="제출된 서명" className="full-view-signature" data-testid="submitted-signature" ref={canvasRef} role="img" />
-}
+})

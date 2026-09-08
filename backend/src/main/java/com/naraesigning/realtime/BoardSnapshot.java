@@ -8,5 +8,9 @@ import java.util.UUID;
 record BoardSnapshot(UUID boardId, int canvasWidth, int canvasHeight, boolean backgroundPresent,
         List<Slot> slots) {
     record Slot(UUID id, BigDecimal x, BigDecimal y, BigDecimal width, BigDecimal height,
-            String background, JsonNode signature, JsonNode draftSignature) {}
+            String background, JsonNode signature, JsonNode draftSignature, long draftEpoch, long revision) {
+        boolean isNewerThan(long epoch, long comparedRevision) {
+            return draftEpoch > epoch || (draftEpoch == epoch && revision > comparedRevision);
+        }
+    }
 }

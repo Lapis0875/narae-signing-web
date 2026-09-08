@@ -60,7 +60,7 @@ class FlywaySchemaIT {
                     + UUID.randomUUID() + "','" + roster + "','PLACED',0.1,0.1,0.3,0.2)");
 
             // Then: versions/tables exist, retry is clean, and duplicate identity is rejected.
-            assertThat(first.migrationsExecuted).isEqualTo(4);
+            assertThat(first.migrationsExecuted).isEqualTo(5);
             assertThat(second.migrationsExecuted).isZero();
             try (var tables = connection.getMetaData().getTables(null, "public", "%", new String[] {"TABLE"})) {
                 var names = new java.util.HashSet<String>();
@@ -75,7 +75,8 @@ class FlywaySchemaIT {
                 assertThat(names).contains("board_owner_id_idx", "roster_entry_board_id_idx",
                         "background_asset_board_id_idx", "roster_entry_board_identity_hmac_key",
                         "admin_login_ip_window_window_started_at_idx", "login_failure_state_pkey",
-                        "login_failure_state_updated_at_idx", "login_failure_state_locked_until_idx");
+                        "login_failure_state_updated_at_idx", "login_failure_state_locked_until_idx",
+                        "signature_slot_active_signer_claim_expires_at_idx");
             }
             try (var columns = statement.executeQuery("SELECT table_name || '.' || column_name FROM information_schema.columns WHERE table_schema='public'")) {
                 var names = new java.util.HashSet<String>();
@@ -85,8 +86,12 @@ class FlywaySchemaIT {
                         "board.share_token_nonce", "board.share_token_key_version", "signature_slot.slot_revision",
                         "background_asset.object_key_nonce", "background_asset.object_key_key_version",
                         "board_deletion_job.reason", "admin_login_ip_window.attempt_count",
-                        "login_failure_state.locked_until");
+                        "login_failure_state.locked_until", "signature_slot.active_signer_claim",
+                        "signature_slot.active_signer_claim_expires_at");
             }
+            assertThatThrownBy(() -> statement.execute("UPDATE signature_slot SET active_signer_claim='"
+                    + UUID.randomUUID() + "' WHERE roster_entry_id='" + roster + "'"))
+                    .hasMessageContaining("signature_slot_active_claim_check");
             assertThatThrownBy(() -> statement.execute("INSERT INTO roster_entry(id,board_id,encrypted_identity,identity_nonce,identity_key_version,identity_hmac) VALUES ('"
                     + UUID.randomUUID() + "','" + board + "',decode('21','hex'),decode('22','hex'),1,decode('13','hex'))"))
                     .hasMessageContaining("roster_entry_board_identity_hmac_key");

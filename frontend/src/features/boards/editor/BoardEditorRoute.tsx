@@ -14,6 +14,7 @@ import {
   fetchBoardDetail,
   fetchCurrentBackground,
   fetchShare,
+  forceReplaceDisplay,
   reissueShare,
   renameBoard,
   saveSlot,
@@ -168,7 +169,7 @@ export function BoardEditorRoute({ actionExtensions }: BoardEditorRouteProps) {
               </ul>
             </section>
             <BackgroundPanel disabled={busy || background.isError} onUpload={replaceBackground} />
-            {share.data === undefined ? <section className="editor-panel"><h2>공유</h2><p>공유 링크를 불러오지 못했습니다.</p></section> : <SharePanel disabled={busy} onReissue={async () => { await runBoardMutation(async () => { await reissueShare(boardId); await queryClient.invalidateQueries({ queryKey: ["admin", "boards", boardId, "share"] }); showToast("공유 링크를 재발급했습니다.") }) }} share={share.data} />}
+            {share.data === undefined ? <section className="editor-panel"><h2>공유</h2><p>공유 링크를 불러오지 못했습니다.</p></section> : <SharePanel disabled={busy} onForceReplace={async () => { await runBoardMutation(async () => { await forceReplaceDisplay(boardId); showToast("행사장 화면을 교체했습니다.") }) }} onReissue={async () => { await runBoardMutation(async () => { await reissueShare(boardId); await queryClient.invalidateQueries({ queryKey: ["admin", "boards", boardId, "share"] }); showToast("공유 링크를 재발급했습니다.") }) }} share={share.data} />}
           </aside>
         </div>
       </main>

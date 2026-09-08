@@ -1,136 +1,12 @@
-import { expect, type Page, test } from "@playwright/test";
-
-type AuthSessionResponse =
-  | { readonly authenticated: false; readonly expiresAt: null }
-  | { readonly authenticated: true; readonly expiresAt: string };
-
-type AuthSessionProbe = {
-  readonly fulfilledBodies: AuthSessionResponse[];
-  readonly requests: string[];
-  readonly unexpectedApiRequests: string[];
-};
-
-const authSessionPath = "/api/v1/auth/session";
-const boardId = "11111111-1111-4111-8111-111111111111";
-const publicLinkPath = "/api/v1/public/links/share-1";
-const signingSessionPath = "/api/v1/public/signing-session";
-const boardDetail = {
-  canvasHeight: 1080,
-  canvasWidth: 1920,
-  createdAt: "2026-08-23T00:00:00.000Z",
-  id: boardId,
-  shareLinkVersion: 1,
-  status: "설정 중",
-  title: "보드 편집",
-  updatedAt: "2026-08-23T00:00:00.000Z",
-};
-
-async function mockApi(
-  page: Page,
-  sessionResponse: AuthSessionResponse | undefined,
-  probe: AuthSessionProbe,
-): Promise<void> {
-  await page.addInitScript(() => {
-    class QaEventSource {
-      onerror: (() => void) | null = null;
-      onopen: (() => void) | null = null;
-
-      addEventListener() {}
-      close() {}
-    }
-    Object.defineProperty(window, "EventSource", {
-      configurable: true,
-      value: QaEventSource,
-    });
-  });
-  await page.route("**/api/v1/**", async (route) => {
-    const request = route.request();
-    const pathname = new URL(request.url()).pathname;
-    if (pathname === authSessionPath && request.method() === "GET") {
-      probe.requests.push(route.request().url());
-      if (sessionResponse !== undefined) {
-        probe.fulfilledBodies.push(sessionResponse);
-        return route.fulfill({
-          contentType: "application/json",
-          body: JSON.stringify(sessionResponse),
-        });
-      }
-    }
-
-    if (pathname === publicLinkPath && request.method() === "GET") {
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({ state: "OPEN", title: "서명하기" }),
-      });
-    }
-    if (pathname === signingSessionPath && request.method() === "GET") {
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({ state: "READY" }),
-      });
-    }
-    if (pathname === "/api/v1/admin/boards" && request.method() === "GET") {
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify([]),
-      });
-    }
-    if (
-      pathname === `/api/v1/admin/boards/${boardId}` &&
-      request.method() === "GET"
-    ) {
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify(boardDetail),
-      });
-    }
-    if (
-      pathname === `/api/v1/admin/boards/${boardId}/roster` &&
-      request.method() === "GET"
-    ) {
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify([]),
-      });
-    }
-    if (
-      pathname === `/api/v1/admin/boards/${boardId}/share` &&
-      request.method() === "GET"
-    ) {
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({ shareToken: "share-1", version: 1 }),
-      });
-    }
-    if (
-      pathname === `/api/v1/admin/boards/${boardId}/background` &&
-      request.method() === "GET"
-    ) {
-      return route.fulfill({ status: 204 });
-    }
-    if (
-      pathname === `/api/v1/admin/boards/${boardId}/snapshot` &&
-      request.method() === "GET"
-    ) {
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({
-          backgroundPresent: false,
-          boardId,
-          canvasHeight: boardDetail.canvasHeight,
-          canvasWidth: boardDetail.canvasWidth,
-          slots: [],
-        }),
-      });
-    }
-    probe.unexpectedApiRequests.push(`${request.method()} ${pathname}`);
-    await route.fulfill({
-      body: JSON.stringify({ code: "FIXTURE_UNEXPECTED_API" }),
-      contentType: "application/json",
-      status: 500,
-    });
-  });
-}
+import { expect, test } from "@playwright/test";
+import {
+  type AuthSessionProbe,
+  boardId,
+  mockApi,
+  publicIdentifyPath,
+  signerIdentity,
+  signingSessionPath,
+} from "./routeShellApi.ts";
 
 const routes = [
   { auth: "signed-out", path: "/login", title: "관리자 로그인" },
@@ -145,8 +21,11 @@ test.describe("@route-shell", () => {
   test("fails closed for an unknown API request", async ({ page }) => {
     // Given
     const probe: AuthSessionProbe = {
+      csrfTokens: [],
       fulfilledBodies: [],
+      identifyBodies: [],
       requests: [],
+      signerRequests: [],
       unexpectedApiRequests: [],
     };
     await mockApi(page, { authenticated: false, expiresAt: null }, probe);
@@ -169,8 +48,11 @@ test.describe("@route-shell", () => {
   }) => {
     // Given
     const probe: AuthSessionProbe = {
+      csrfTokens: [],
       fulfilledBodies: [],
+      identifyBodies: [],
       requests: [],
+      signerRequests: [],
       unexpectedApiRequests: [],
     };
     await mockApi(page, { authenticated: false, expiresAt: null }, probe);
@@ -194,8 +76,11 @@ test.describe("@route-shell", () => {
     }, testInfo) => {
       // Given
       const probe: AuthSessionProbe = {
+        csrfTokens: [],
         fulfilledBodies: [],
+        identifyBodies: [],
         requests: [],
+        signerRequests: [],
         unexpectedApiRequests: [],
       };
       const consoleErrors: string[] = [];
@@ -225,7 +110,12 @@ test.describe("@route-shell", () => {
         page.getByRole("heading", { level: 1, name: route.title }),
       ).toBeVisible();
       if (route.auth === "public") {
+        await page.getByLabel("소속사 (선택)").fill(signerIdentity.organization);
+        await page.getByLabel("직책 (선택)").fill(signerIdentity.job);
+        await page.getByLabel("이름").fill(signerIdentity.name);
+        await page.getByRole("button", { name: "정보 확인" }).click();
         await expect(page.getByTestId("signer-canvas")).toBeVisible();
+        await expect(page.locator(".public-signer__proportional-pad")).toBeVisible();
         await page.waitForLoadState("networkidle");
         await page.evaluate(async () => {
           await new Promise<void>((resolve) =>
@@ -250,6 +140,13 @@ test.describe("@route-shell", () => {
       } else {
         expect(probe.requests).toHaveLength(0);
         expect(probe.fulfilledBodies).toHaveLength(0);
+        expect(probe.csrfTokens).toEqual(["route-fixture-csrf"]);
+        expect(probe.identifyBodies).toEqual([JSON.stringify(signerIdentity)]);
+        expect(probe.signerRequests).toEqual([
+          `POST ${publicIdentifyPath}`,
+          `GET ${signingSessionPath}`,
+          `PUT ${signingSessionPath}/draft`,
+        ]);
       }
       expect(probe.unexpectedApiRequests).toEqual([]);
       if (route.auth === "public") {
@@ -269,8 +166,11 @@ test.describe("@route-shell", () => {
   }, testInfo) => {
     // Given
     const probe: AuthSessionProbe = {
+      csrfTokens: [],
       fulfilledBodies: [],
+      identifyBodies: [],
       requests: [],
+      signerRequests: [],
       unexpectedApiRequests: [],
     };
     await mockApi(page, undefined, probe);

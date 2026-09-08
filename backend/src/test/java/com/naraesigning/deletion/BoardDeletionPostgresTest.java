@@ -3,10 +3,12 @@ package com.naraesigning.deletion;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 import com.naraesigning.crypto.CryptoContext;
 import com.naraesigning.crypto.VersionedCryptoService;
 import com.naraesigning.realtime.BoardMutationEvent;
+import com.naraesigning.realtime.LiveSignatureRegistry;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.Duration;
@@ -171,7 +173,7 @@ class BoardDeletionPostgresTest {
                     "select count(*) from board_deletion_job where board_id = ?", Integer.class, boardId))
                     .isOne();
             published.add((BoardMutationEvent) event);
-        });
+        }, mock(LiveSignatureRegistry.class));
 
         setup.execute("""
                 create function task28_reject_job() returns trigger language plpgsql as $$

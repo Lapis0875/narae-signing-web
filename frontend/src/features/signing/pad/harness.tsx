@@ -1,8 +1,37 @@
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { ApiError } from "../../../api/errors.ts";
 import "../../../styles.css";
+import {
+  appendSignatureDraft,
+  type SignatureDraftDelta,
+  type SignatureDraftVersion,
+  updateSignatureDraft,
+} from "../api/signatureDraftApi.ts";
 import { SignaturePad } from "./index.ts";
 import type { SignaturePayload } from "./signaturePayload.ts";
+
+async function syncFull(
+  payload: SignaturePayload,
+): Promise<SignatureDraftVersion | null> {
+  try {
+    return await updateSignatureDraft(payload);
+  } catch (error) {
+    if (error instanceof ApiError) return null;
+    throw error;
+  }
+}
+
+async function syncDelta(
+  delta: SignatureDraftDelta,
+): Promise<SignatureDraftVersion | null> {
+  try {
+    return await appendSignatureDraft(delta);
+  } catch (error) {
+    if (error instanceof ApiError) return null;
+    throw error;
+  }
+}
 
 function summarize(payload: SignaturePayload): string {
   let pointCount = 0;
@@ -35,6 +64,7 @@ function Harness() {
     }
     return true;
   };
+  const draftSync = new URLSearchParams(location.search).has("draft-sync");
 
   return (
     <main className="app-shell">
@@ -47,7 +77,10 @@ function Harness() {
         >
           제출 거부 {rejectSubmission ? "켜짐" : "꺼짐"}
         </button>
-        <SignaturePad onSubmit={submit} />
+        <SignaturePad
+          {...(draftSync ? { onDraft: syncFull, onDraftDelta: syncDelta } : {})}
+          onSubmit={submit}
+        />
         <output data-testid="payload-summary" hidden>
           {summary}
         </output>

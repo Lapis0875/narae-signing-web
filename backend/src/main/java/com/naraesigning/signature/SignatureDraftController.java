@@ -1,5 +1,6 @@
 package com.naraesigning.signature;
 
+import com.naraesigning.realtime.LiveSignatureRegistry;
 import com.naraesigning.session.SignerSessionContract;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
@@ -27,13 +28,28 @@ final class SignatureDraftController {
     }
 
     @PutMapping(value = "/draft", consumes = MediaType.APPLICATION_JSON_VALUE)
-    ResponseEntity<Void> update(HttpServletRequest request) throws IOException {
+    ResponseEntity<LiveSignatureRegistry.Version> update(HttpServletRequest request) throws IOException {
         var payload = parser.parse(request.getInputStream());
         var httpSession = request.getSession(false);
         try {
             var session = SignatureSession.from(httpSession, clock.instant());
-            drafts.update(session, SignerSessionContract.ensureDraftClaimId(httpSession), payload, clock.instant());
-            return ResponseEntity.noContent().build();
+            var version = drafts.update(
+                    session, SignerSessionContract.ensureDraftClaimId(httpSession), payload, clock.instant());
+            return ResponseEntity.ok(version);
+        } catch (SignatureSubmitException exception) {
+            if (exception.clearsSession() && httpSession != null) httpSession.invalidate();
+            throw exception;
+        }
+    }
+
+    @PostMapping(value = "/draft/delta", consumes = MediaType.APPLICATION_JSON_VALUE)
+    ResponseEntity<LiveSignatureRegistry.DeltaResult> delta(HttpServletRequest request) throws IOException {
+        var delta = parser.parseDelta(request.getInputStream());
+        var httpSession = request.getSession(false);
+        try {
+            var result = drafts.delta(SignatureSession.from(httpSession, clock.instant()),
+                    SignerSessionContract.ensureDraftClaimId(httpSession), delta, clock.instant());
+            return ResponseEntity.ok(result);
         } catch (SignatureSubmitException exception) {
             if (exception.clearsSession() && httpSession != null) httpSession.invalidate();
             throw exception;

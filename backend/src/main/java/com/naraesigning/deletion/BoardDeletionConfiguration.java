@@ -2,6 +2,7 @@ package com.naraesigning.deletion;
 
 import com.naraesigning.background.BackgroundObjectStore;
 import com.naraesigning.crypto.VersionedCryptoService;
+import com.naraesigning.realtime.LiveSignatureRegistry;
 import java.time.Clock;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.ApplicationEventPublisher;
@@ -20,8 +21,9 @@ class BoardDeletionConfiguration {
         return new JdbcBoardDeletionStore(jdbc, new TransactionTemplate(transactions), crypto);
     }
 
-    @Bean BoardDeletionService boardDeletionService(BoardDeletionStore store, ApplicationEventPublisher events) {
-        return new BoardDeletionService(store, events);
+    @Bean BoardDeletionService boardDeletionService(BoardDeletionStore store, ApplicationEventPublisher events,
+            LiveSignatureRegistry drafts) {
+        return new BoardDeletionService(store, events, drafts);
     }
 
     @Bean

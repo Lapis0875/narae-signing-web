@@ -11,6 +11,7 @@ import com.naraesigning.board.core.BoardShare;
 import com.naraesigning.board.core.BoardView;
 import com.naraesigning.board.core.CreatedBoard;
 import com.naraesigning.realtime.BoardMutationEvent;
+import com.naraesigning.realtime.LiveSignatureRegistry;
 import com.naraesigning.slot.Slot;
 import com.naraesigning.slot.SlotBackground;
 import com.naraesigning.slot.SlotBounds;
@@ -31,15 +32,18 @@ final class JdbcBoardAdminFacade implements BoardAdminFacade {
     private final JdbcOperations jdbc;
     private final TransactionOperations transactions;
     private final ApplicationEventPublisher events;
+    private final LiveSignatureRegistry drafts;
 
     JdbcBoardAdminFacade(BoardService boards, SlotService slots, BackgroundAssetService backgrounds,
-            JdbcOperations jdbc, TransactionOperations transactions, ApplicationEventPublisher events) {
+            JdbcOperations jdbc, TransactionOperations transactions, ApplicationEventPublisher events,
+            LiveSignatureRegistry drafts) {
         this.boards = boards;
         this.slots = slots;
         this.backgrounds = backgrounds;
         this.jdbc = jdbc;
         this.transactions = transactions;
         this.events = events;
+        this.drafts = drafts;
     }
 
     @Override public void authorize(BoardOwner owner, UUID boardId) { boards.detail(owner, boardId); }
@@ -92,7 +96,8 @@ final class JdbcBoardAdminFacade implements BoardAdminFacade {
     }
 
     @Override public BoardShare reissueShare(BoardOwner owner, UUID boardId) {
-        return boards.reissueShare(owner, boardId);
+        return boards.reissueShare(owner, boardId,
+                () -> publishAfterCommit(new BoardMutationEvent(boardId, "share-reissued")));
     }
 
     @Override
@@ -142,6 +147,7 @@ final class JdbcBoardAdminFacade implements BoardAdminFacade {
                     result -> result.next() ? result.getString(1) : null, boardId);
             if (!expected.equals(current)) throw new BoardLifecycleException("BOARD_STATE_CONFLICT");
             if (requireCompleteLayout) requireOpenPrerequisites(boardId, board.title());
+            if ("CLOSED".equals(changed)) fenceDraftsUntilCompletion(boardId);
             if (jdbc.update("update board set status = ?, updated_at = current_timestamp where id = ? and status = ?",
                     changed, boardId, expected) != 1) {
                 throw new BoardLifecycleException("BOARD_STATE_CONFLICT");
@@ -170,6 +176,14 @@ final class JdbcBoardAdminFacade implements BoardAdminFacade {
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override public void afterCommit() { events.publishEvent(event); }
+        });
+    }
+
+    private void fenceDraftsUntilCompletion(UUID boardId) {
+        drafts.fenceBoard(boardId);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override public void afterCommit() { drafts.invalidateBoard(boardId); }
+            @Override public void afterCompletion(int status) { drafts.unfenceBoard(boardId); }
         });
     }
 }

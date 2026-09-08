@@ -3,6 +3,7 @@ package com.naraesigning.board.api;
 import com.naraesigning.background.BackgroundAssetService;
 import com.naraesigning.board.core.BoardService;
 import com.naraesigning.session.SessionCookieActions;
+import com.naraesigning.realtime.LiveSignatureRegistry;
 import com.naraesigning.slot.SlotService;
 import java.time.Clock;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -19,9 +20,10 @@ class BoardAdminConfiguration {
     @Bean
     BoardAdminFacade boardAdminFacade(BoardService boards, SlotService slots,
             BackgroundAssetService backgrounds, JdbcOperations jdbc,
-            PlatformTransactionManager transactionManager, ApplicationEventPublisher events) {
+            PlatformTransactionManager transactionManager, ApplicationEventPublisher events,
+            LiveSignatureRegistry drafts) {
         return new JdbcBoardAdminFacade(boards, slots, backgrounds, jdbc,
-                new TransactionTemplate(transactionManager), events);
+                new TransactionTemplate(transactionManager), events, drafts);
     }
 
     @Bean

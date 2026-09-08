@@ -1,0 +1,13 @@
+services:
+  backend:
+    cpus: 2.0
+  postgres:
+    volumes:
+      - ci-postgres:/var/lib/postgresql/data
+  minio:
+    volumes:
+      - ci-minio:/data
+
+volumes:
+  ci-postgres: {}
+  ci-minio: {}

@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useState } from "react"
 import { ApiError } from "../../../api/errors.ts"
-import { cancelSignatureDraft, clearSignatureDraft, updateSignatureDraft } from "../api/signatureDraftApi.ts"
+import { appendSignatureDraft, cancelSignatureDraft, clearSignatureDraft, type SignatureDraftDelta,
+  type SignatureDraftVersion, updateSignatureDraft } from "../api/signatureDraftApi.ts"
 import { submitSignature } from "../api/signatureSubmitApi.ts"
 import type { SignaturePayload } from "../pad/signaturePayload.ts"
 import { PublicSignerContent } from "./PublicSignerContent.tsx"
@@ -208,24 +209,33 @@ export function PublicSignerFlow({ shareToken }: PublicSignerFlowProps) {
     }
   }
 
-  const draft = async (payload: SignaturePayload): Promise<boolean> => {
+  const reconcileDraftConflict = async (error: ApiError): Promise<void> => {
+    if (error.status !== 409) return
     try {
-      await updateSignatureDraft(payload)
-      return true
+      const session = await readSigningSession()
+      setView((current) => current.kind === "drawing" ? viewFromSession(current.title, session, current.identity) : current)
+    } catch {
+      setView((current) => "title" in current ? identifyView(current.title, reidentifyMessage) : current)
+    }
+  }
+
+  const draft = async (payload: SignaturePayload): Promise<SignatureDraftVersion | null> => {
+    try {
+      return await updateSignatureDraft(payload)
     } catch (error) {
-      if (error instanceof ApiError && error.status === 409) {
-        try {
-          const session = await readSigningSession()
-          setView((current) => current.kind === "drawing"
-            ? viewFromSession(current.title, session, current.identity)
-            : current)
-        } catch {
-          setView((current) => "title" in current
-            ? identifyView(current.title, reidentifyMessage)
-            : current)
-        }
-      }
-      return false
+      if (!(error instanceof ApiError)) throw error
+      await reconcileDraftConflict(error)
+      return null
+    }
+  }
+
+  const draftDelta = async (delta: SignatureDraftDelta): Promise<SignatureDraftVersion | null> => {
+    try {
+      return await appendSignatureDraft(delta)
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error
+      await reconcileDraftConflict(error)
+      return null
     }
   }
 
@@ -250,5 +260,5 @@ export function PublicSignerFlow({ shareToken }: PublicSignerFlowProps) {
     }
   }
 
-  return <PublicSignerContent cancel={cancel} clearDraft={clearDraft} draft={draft} identify={identify} submit={submit} view={view} />
+  return <PublicSignerContent cancel={cancel} clearDraft={clearDraft} draft={draft} draftDelta={draftDelta} identify={identify} submit={submit} view={view} />
 }

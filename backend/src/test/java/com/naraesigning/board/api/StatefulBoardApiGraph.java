@@ -16,6 +16,7 @@ import com.naraesigning.roster.RosterEntry;
 import com.naraesigning.roster.RosterIdentity;
 import com.naraesigning.roster.RosterService;
 import com.naraesigning.realtime.BoardMutationEvent;
+import com.naraesigning.realtime.LiveSignatureRegistry;
 import com.naraesigning.slot.Slot;
 import com.naraesigning.slot.SlotBackground;
 import com.naraesigning.slot.SlotBounds;
@@ -45,17 +46,18 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 final class StatefulBoardApiGraph {
     private static final UUID BACKGROUND_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
-    private final BoardCoreHarness boardCore = new BoardCoreHarness();
-    private final RosterHarness roster = new RosterHarness();
-    private final Map<UUID, SlotState> slots = new LinkedHashMap<>();
     private final List<String> transactionTrace = new ArrayList<>();
     private final List<String> events = new ArrayList<>();
+    private final BoardCoreHarness boardCore = new BoardCoreHarness(transactions());
+    private final RosterHarness roster = new RosterHarness();
+    private final Map<UUID, SlotState> slots = new LinkedHashMap<>();
     private final SlotService slotService = mock(SlotService.class, this::slotCall);
     private final BackgroundAssetService backgrounds = mock(BackgroundAssetService.class, this::backgroundCall);
     private final JdbcOperations jdbc = mock(JdbcOperations.class, this::jdbcCall);
     private final ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class, this::eventCall);
     private final BoardAdminFacade facade = new AuditedFacade(new JdbcBoardAdminFacade(
-            boardCore.service, slotService, backgrounds, jdbc, transactions(), publisher));
+            boardCore.service, slotService, backgrounds, jdbc, transactions(), publisher,
+            mock(LiveSignatureRegistry.class)));
     private int ownerLookups;
     private boolean failPostTransitionDetail;
     private BackgroundState background;
@@ -356,7 +358,7 @@ final class StatefulBoardApiGraph {
         private final Object repository;
         private final BoardService service;
 
-        private BoardCoreHarness() {
+        private BoardCoreHarness(TransactionOperations transactions) {
             try {
                 var repositoryType = Class.forName("com.naraesigning.board.core.BoardRepository");
                 var repositoryClass = Class.forName("com.naraesigning.board.core.InMemoryBoardRepository");
@@ -366,7 +368,7 @@ final class StatefulBoardApiGraph {
                 var constructor = BoardService.class.getDeclaredConstructor(
                         repositoryType, VersionedCryptoService.class, TransactionOperations.class);
                 service = (BoardService) accessible(constructor).newInstance(repository,
-                        new VersionedCryptoService(Map.of(1, key), 1), directTransactions());
+                        new VersionedCryptoService(Map.of(1, key), 1), transactions);
             } catch (ReflectiveOperationException exception) {
                 throw new IllegalStateException(exception);
             }

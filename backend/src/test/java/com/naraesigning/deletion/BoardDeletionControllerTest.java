@@ -2,8 +2,10 @@ package com.naraesigning.deletion;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 import com.naraesigning.session.AdminSessionContract;
+import com.naraesigning.realtime.LiveSignatureRegistry;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -61,7 +63,8 @@ class BoardDeletionControllerTest {
     }
 
     private static BoardDeletionController controller(BoardDeletionStore store) {
-        return new BoardDeletionController(new BoardDeletionService(store, event -> {}),
+        return new BoardDeletionController(new BoardDeletionService(
+                store, event -> {}, mock(LiveSignatureRegistry.class)),
                 Clock.fixed(NOW, ZoneOffset.UTC));
     }
 

@@ -1,48 +1,139 @@
 import { useQuery } from "@tanstack/react-query"
-import { useCallback } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useParams } from "react-router-dom"
+import { ApiError } from "../api/errors.ts"
 import { FullViewCanvas } from "../features/boards/fullview/FullViewCanvas.tsx"
-import { fetchPublicDisplayBackground, fetchPublicDisplaySnapshot } from "../features/boards/fullview/publicDisplayApi.ts"
-import { usePublicBoardRealtime } from "../features/boards/fullview/realtime.ts"
+import {
+  claimPublicDisplay,
+  DISPLAY_ALREADY_CONNECTED_MESSAGE,
+  fetchPublicDisplayBackground,
+  fetchPublicDisplaySnapshot,
+  fetchPublicDisplayTitle,
+  heartbeatPublicDisplay,
+  PublicDisplayDeniedError,
+  PublicDisplayUnavailableError,
+  releasePublicDisplay,
+} from "../features/boards/fullview/publicDisplayApi.ts"
+import type { FullViewSnapshot } from "../features/boards/fullview/fullViewApi.ts"
+import {
+  type PublicDraftEvent,
+  mergePublicSnapshot,
+  reconcilePublicDraft,
+  usePublicBoardRealtime,
+} from "../features/boards/fullview/realtime.ts"
 import { useObjectUrl } from "../features/boards/editor/useObjectUrl.ts"
-import { readPublicLink } from "../features/signing/flow/publicSignerApi.ts"
+
+const DISPLAY_REPLACED_MESSAGE = "이 화면의 표시 연결이 다른 화면으로 전환되었습니다."
+const DISPLAY_UNAVAILABLE_MESSAGE = "행사장 화면을 불러오지 못했습니다."
 
 export function PublicDisplayRoute() {
   const { shareToken = "missing" } = useParams()
-  const link = useQuery({
-    queryFn: () => readPublicLink(shareToken),
-    queryKey: ["public", "boards", shareToken, "link"],
+  const [terminalMessage, setTerminalMessage] = useState<string | null>(null)
+  const [displaySnapshot, setDisplaySnapshot] = useState<FullViewSnapshot>()
+  const displaySnapshotRef = useRef<FullViewSnapshot | undefined>(undefined)
+  const terminalRef = useRef(false)
+  const claim = useQuery({
+    queryFn: () => claimPublicDisplay(shareToken),
+    queryKey: ["public", "boards", shareToken, "display-claim"],
   })
-  const visible = link.data?.state === "OPEN" || link.data?.state === "CLOSED"
+  const connected = claim.data !== undefined && terminalMessage === null
+  const title = useQuery({
+    enabled: connected,
+    queryFn: () => fetchPublicDisplayTitle(shareToken),
+    queryKey: ["public", "boards", shareToken, "display-title"],
+  })
   const snapshot = useQuery({
-    enabled: visible,
+    enabled: connected,
     queryFn: () => fetchPublicDisplaySnapshot(shareToken),
     queryKey: ["public", "boards", shareToken, "snapshot"],
     refetchInterval: 5_000,
     refetchIntervalInBackground: true,
   })
   const background = useQuery({
-    enabled: visible,
+    enabled: connected,
     queryFn: () => fetchPublicDisplayBackground(shareToken),
     queryKey: ["public", "boards", shareToken, "background"],
     refetchInterval: 5_000,
     refetchIntervalInBackground: true,
   })
   const backgroundUrl = useObjectUrl(background.data)
+  const claimTerminalMessage = claim.data === undefined
+    ? null
+    : claim.error instanceof PublicDisplayDeniedError
+      ? DISPLAY_ALREADY_CONNECTED_MESSAGE
+      : claim.error instanceof ApiError && claim.error.status === 404
+        ? DISPLAY_UNAVAILABLE_MESSAGE
+        : null
   const refetchSnapshot = useCallback(async () => {
     await Promise.all([snapshot.refetch(), background.refetch()])
   }, [background.refetch, snapshot.refetch])
-  usePublicBoardRealtime(shareToken, refetchSnapshot, visible)
+  const terminateDisplay = useCallback((message: string) => {
+    terminalRef.current = true
+    displaySnapshotRef.current = undefined
+    setDisplaySnapshot(undefined)
+    setTerminalMessage(message)
+  }, [])
+  const showReplacement = useCallback(() => terminateDisplay(DISPLAY_REPLACED_MESSAGE), [terminateDisplay])
+  const applyDraft = useCallback((event: PublicDraftEvent) => {
+    if (terminalRef.current) return "ignored" as const
+    const current = displaySnapshotRef.current
+    if (current === undefined) return "recover" as const
+    const result = reconcilePublicDraft(current, event)
+    if (result.kind === "applied") {
+      displaySnapshotRef.current = result.snapshot
+      setDisplaySnapshot(result.snapshot)
+    }
+    return result.kind
+  }, [])
+  usePublicBoardRealtime(shareToken, refetchSnapshot, connected, showReplacement, applyDraft)
 
-  if (link.isPending) return <main className="full-view-page"><div aria-busy="true" className="full-view-canvas full-view-state" role="status"><p>행사장 화면을 불러오는 중입니다.</p></div></main>
-  if (link.error !== null || link.data === undefined || link.data.state === "INVALID") {
-    return <main className="full-view-page"><div className="full-view-canvas full-view-state" role="alert"><p>행사장 화면을 불러오지 못했습니다.</p></div></main>
+  useEffect(() => {
+    if (terminalRef.current || snapshot.data === undefined) return
+    const merged = displaySnapshotRef.current === undefined
+      ? snapshot.data
+      : mergePublicSnapshot(displaySnapshotRef.current, snapshot.data)
+    displaySnapshotRef.current = merged
+    setDisplaySnapshot(merged)
+  }, [snapshot.data])
+
+  useEffect(() => {
+    if (claimTerminalMessage !== null) terminateDisplay(claimTerminalMessage)
+    if (
+      title.error instanceof PublicDisplayUnavailableError
+      || snapshot.error instanceof PublicDisplayUnavailableError
+      || background.error instanceof PublicDisplayUnavailableError
+    ) terminateDisplay(DISPLAY_UNAVAILABLE_MESSAGE)
+  }, [background.error, claimTerminalMessage, snapshot.error, terminateDisplay, title.error])
+
+  useEffect(() => {
+    if (!connected) return
+    const heartbeat = setInterval(() => {
+      void heartbeatPublicDisplay(shareToken).then((status) => {
+        if (status === "denied") terminateDisplay(DISPLAY_ALREADY_CONNECTED_MESSAGE)
+        if (status === "revoked") terminateDisplay(DISPLAY_UNAVAILABLE_MESSAGE)
+      })
+    }, 10_000)
+    const release = () => { void releasePublicDisplay(shareToken) }
+    window.addEventListener("pagehide", release)
+    return () => {
+      clearInterval(heartbeat)
+      window.removeEventListener("pagehide", release)
+    }
+  }, [connected, shareToken, terminateDisplay])
+
+  const definitelyUnavailable = title.error instanceof PublicDisplayUnavailableError
+    || snapshot.error instanceof PublicDisplayUnavailableError
+    || background.error instanceof PublicDisplayUnavailableError
+  if (terminalMessage !== null || claimTerminalMessage !== null || definitelyUnavailable) return <main className="full-view-page full-view-page--public"><div className="full-view-canvas full-view-state" role="alert"><p>{terminalMessage ?? claimTerminalMessage ?? DISPLAY_UNAVAILABLE_MESSAGE}</p></div></main>
+  if (claim.isPending) return <main className="full-view-page full-view-page--public"><div aria-busy="true" className="full-view-canvas full-view-state" role="status"><p>행사장 화면을 불러오는 중입니다.</p></div></main>
+  if (claim.error !== null && claim.data === undefined) {
+    const message = claim.error instanceof PublicDisplayDeniedError ? DISPLAY_ALREADY_CONNECTED_MESSAGE : "행사장 화면을 불러오지 못했습니다."
+    return <main className="full-view-page full-view-page--public"><div className="full-view-canvas full-view-state" role="alert"><p>{message}</p></div></main>
   }
-  if (!visible) {
-    return <main className="full-view-page"><h1>{link.data.title}</h1><div className="full-view-canvas full-view-state" role="status"><p>아직 서명 준비 중입니다.</p></div></main>
-  }
-  const canvas = snapshot.data === undefined || background.isPending || snapshot.error !== null || background.error !== null
-    ? <div aria-busy={snapshot.isPending || background.isPending} className="full-view-canvas full-view-state" role={snapshot.error !== null || background.error !== null ? "alert" : "status"}><p>{snapshot.error !== null || background.error !== null ? "행사장 화면을 불러오지 못했습니다." : "행사장 화면을 불러오는 중입니다."}</p></div>
-    : <FullViewCanvas backgroundUrl={backgroundUrl} snapshot={snapshot.data} />
-  return <main className="full-view-page"><h1>{link.data.title}</h1>{canvas}</main>
+  const initialError = (title.error !== null && title.data === undefined) || (snapshot.error !== null && snapshot.data === undefined) || (background.error !== null && background.data === undefined)
+  if (initialError) return <main className="full-view-page full-view-page--public"><div className="full-view-canvas full-view-state" role="alert"><p>행사장 화면을 불러오지 못했습니다.</p></div></main>
+  const canvas = displaySnapshot === undefined || background.data === undefined
+    ? <div aria-busy="true" className="full-view-canvas full-view-state" role="status"><p>행사장 화면을 불러오는 중입니다.</p></div>
+    : <FullViewCanvas backgroundUrl={backgroundUrl} snapshot={displaySnapshot} />
+  return <main className="full-view-page full-view-page--public">{title.data === undefined ? null : <h1>{title.data}</h1>}{canvas}</main>
 }

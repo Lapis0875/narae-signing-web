@@ -2,6 +2,8 @@ package com.naraesigning.board.api;
 
 import com.naraesigning.background.CanvasChange;
 import com.naraesigning.board.core.BoardOwner;
+import com.naraesigning.realtime.PublicBoardRealtimeRegistry;
+import com.naraesigning.realtime.PublicDisplayLeaseRegistry;
 import com.naraesigning.slot.SlotBackground;
 import com.naraesigning.slot.SlotBounds;
 import jakarta.servlet.http.HttpServletRequest;
@@ -21,6 +23,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.multipart.MultipartFile;
 
 @RestController
@@ -28,8 +31,18 @@ import org.springframework.web.multipart.MultipartFile;
 @ConditionalOnProperty("spring.datasource.url")
 final class BoardAdminController {
     private final BoardAdminFacade facade;
+    private final PublicDisplayLeaseRegistry displayLeases;
+    private final PublicBoardRealtimeRegistry publicRealtime;
 
-    BoardAdminController(BoardAdminFacade facade) { this.facade = facade; }
+    BoardAdminController(BoardAdminFacade facade) { this(facade, null, null); }
+
+    @Autowired
+    BoardAdminController(BoardAdminFacade facade, PublicDisplayLeaseRegistry displayLeases,
+            PublicBoardRealtimeRegistry publicRealtime) {
+        this.facade = facade;
+        this.displayLeases = displayLeases;
+        this.publicRealtime = publicRealtime;
+    }
 
     @GetMapping Object list(HttpServletRequest request) { return facade.list(owner(request)); }
 
@@ -70,6 +83,12 @@ final class BoardAdminController {
     @PostMapping("/{boardId}/share/reissue") Object reissueShare(
             @PathVariable UUID boardId, HttpServletRequest request) {
         return facade.reissueShare(owner(request), boardId);
+    }
+
+    @PostMapping("/{boardId}/display/force-replace")
+    ResponseEntity<Void> forceReplaceDisplay(@PathVariable UUID boardId) {
+        displayLeases.forceReplace(boardId, () -> publicRealtime.replace(boardId));
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping(path = "/{boardId}/background", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

@@ -2,13 +2,15 @@ import type { CSSProperties, FormEvent } from "react"
 import { AppShell } from "../../../components/AppShell.tsx"
 import { ErrorView, ForbiddenView, LoadingView } from "../../../components/AsyncViews.tsx"
 import { SignaturePad } from "../pad/index.ts"
+import type { SignatureDraftDelta, SignatureDraftVersion } from "../api/signatureDraftApi.ts"
 import type { SignaturePayload } from "../pad/signaturePayload.ts"
 import type { SignerView } from "./PublicSignerFlow.tsx"
 
 type PublicSignerContentProps = {
   readonly cancel: () => Promise<boolean>
   readonly clearDraft: () => Promise<boolean>
-  readonly draft: (payload: SignaturePayload) => Promise<boolean>
+  readonly draft: (payload: SignaturePayload) => Promise<SignatureDraftVersion | null>
+  readonly draftDelta: (delta: SignatureDraftDelta) => Promise<SignatureDraftVersion | null>
   readonly identify: (event: FormEvent<HTMLFormElement>) => void
   readonly submit: (payload: SignaturePayload) => Promise<boolean>
   readonly view: SignerView
@@ -22,7 +24,7 @@ function signatureAspectStyle(ratio: number): SignatureAspectStyle {
   return { "--public-signer-signature-aspect": ratio }
 }
 
-export function PublicSignerContent({ cancel, clearDraft, draft, identify, submit, view }: PublicSignerContentProps) {
+export function PublicSignerContent({ cancel, clearDraft, draft, draftDelta, identify, submit, view }: PublicSignerContentProps) {
   if (view.kind === "loading") {
     return <LoadingView />
   }
@@ -110,13 +112,13 @@ export function PublicSignerContent({ cancel, clearDraft, draft, identify, submi
           </p>
         </div>
         {view.signatureAspectRatio === undefined ? (
-          <SignaturePad onCancel={cancel} onClearDraft={clearDraft} onDraft={draft} onSubmit={submit} />
+          <SignaturePad onCancel={cancel} onClearDraft={clearDraft} onDraft={draft} onDraftDelta={draftDelta} onSubmit={submit} />
         ) : (
           <div
             className="public-signer__proportional-pad"
             style={signatureAspectStyle(view.signatureAspectRatio)}
           >
-            <SignaturePad onCancel={cancel} onClearDraft={clearDraft} onDraft={draft} onSubmit={submit} />
+            <SignaturePad onCancel={cancel} onClearDraft={clearDraft} onDraft={draft} onDraftDelta={draftDelta} onSubmit={submit} />
           </div>
         )}
       </section>
