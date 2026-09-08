@@ -145,12 +145,14 @@ test.describe("@real public display composed contract", () => {
         (request) =>
           new URL(request.url()).pathname.includes("/signing-session/draft"),
       );
+      const draftsBeforeOffline = draftResponses.length;
       await signerContext.setOffline(true);
       await drawStroke(signer, 0.3);
       await failedOfflineDraft;
       await signerContext.setOffline(false);
       await expect
-        .poll(() => draftResponses.some((entry) => entry.startsWith("PUT ")), {
+        .poll(() => draftResponses.slice(draftsBeforeOffline).some((entry) =>
+          entry.startsWith("PUT ") && entry.endsWith(" 200")), {
           timeout: 25_000,
         })
         .toBe(true);

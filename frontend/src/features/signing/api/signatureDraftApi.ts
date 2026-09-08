@@ -20,7 +20,12 @@ export type SignatureDraftDelta = {
 
 export async function updateSignatureDraft(payload: SignaturePayload): Promise<SignatureDraftVersion> {
   return parsedApiRequest("/api/v1/public/signing-session/draft", signatureDraftVersionSchema, {
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      version: payload.version,
+      strokes: payload.strokes.map((stroke) => ({
+        points: stroke.points.map((point) => ({ x: point.x, y: point.y })),
+      })),
+    }),
     headers: { "Content-Type": "application/json" },
     method: "PUT",
   })

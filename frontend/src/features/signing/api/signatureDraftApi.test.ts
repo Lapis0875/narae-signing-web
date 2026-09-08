@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest"
 import { setCsrfToken } from "../../../api/client.ts"
+import type { SignaturePayload } from "../pad/signaturePayload.ts"
 import {
   appendSignatureDraft,
   cancelSignatureDraft,
@@ -23,10 +24,12 @@ it("sends full and delta drafts through their canonical signer session APIs", as
   vi.spyOn(document, "cookie", "get").mockReturnValue("XSRF-TOKEN=draft-csrf-token")
   setCsrfToken("draft-csrf-token")
 
-  await updateSignatureDraft({
-    strokes: [{ points: [{ x: 10, y: 20 }] }],
+  const unorderedPayload: SignaturePayload = {
+    strokes: [{ points: [{ y: 20, x: 10 }] }],
     version: 1,
-  })
+  }
+
+  await updateSignatureDraft(unorderedPayload)
   await appendSignatureDraft({
     clientSequence: 5,
     draftEpoch: 3,
@@ -39,7 +42,7 @@ it("sends full and delta drafts through their canonical signer session APIs", as
   await cancelSignatureDraft()
 
   expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/v1/public/signing-session/draft", expect.objectContaining({
-    body: "{\"strokes\":[{\"points\":[{\"x\":10,\"y\":20}]}],\"version\":1}",
+    body: "{\"version\":1,\"strokes\":[{\"points\":[{\"x\":10,\"y\":20}]}]}",
     method: "PUT",
   }))
   expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/v1/public/signing-session/draft/delta", expect.objectContaining({
