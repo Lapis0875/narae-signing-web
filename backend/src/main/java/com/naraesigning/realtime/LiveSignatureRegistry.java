@@ -165,6 +165,7 @@ public final class LiveSignatureRegistry {
         });
         if (outOfSync[0]) throw new OutOfSyncException();
         if (!result[0].duplicate()) {
+            boards.publish(boardId, "signature-draft");
             publicBoards.publish(boardId, "signature-draft", new PublicDraftEvent(
                     slotId, result[0].draftEpoch(), result[0].revision(),
                     delta.operation().name().toLowerCase(Locale.ROOT), delta.strokeIndex(), delta.points(), null));
