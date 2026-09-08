@@ -5,6 +5,10 @@ import type {
 } from "../api/signatureDraftApi.ts";
 import type { SignaturePayload, SignaturePoint } from "./signaturePayload.ts";
 
+// Normalized points use at most 26 ASCII bytes including a comma; this leaves
+// over 12 KiB for metadata under BodyLimitFilter's 65,536-byte request cap.
+const MAX_BATCH_POINTS = 2_048;
+
 type PendingDelta = {
   readonly operation: SignatureDraftDelta["operation"];
   readonly points: readonly SignaturePoint[];
@@ -117,7 +121,11 @@ export function useSignatureDraftSync({
     const points = [...next.points];
     if (next.operation === "begin" || next.operation === "append") {
       for (const candidate of pendingRef.current.slice(1)) {
-        if (candidate.operation !== "append" || candidate.strokeIndex !== next.strokeIndex) {
+        if (
+          candidate.operation !== "append" ||
+          candidate.strokeIndex !== next.strokeIndex ||
+          points.length + candidate.points.length > MAX_BATCH_POINTS
+        ) {
           break;
         }
         points.push(...candidate.points);
