@@ -12,8 +12,10 @@ import com.naraesigning.signature.SignatureSubmitted;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -32,6 +34,7 @@ public final class LiveSignatureRegistry {
     private final PublicBoardRealtimeRegistry publicBoards;
     private final ConcurrentHashMap<UUID, Draft> drafts = new ConcurrentHashMap<>();
     private final Set<UUID> fencedBoards = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, PendingUpdates> pendingUpdates = new HashMap<>();
 
     LiveSignatureRegistry(
             ObjectMapper json,
@@ -48,6 +51,24 @@ public final class LiveSignatureRegistry {
     public synchronized Version update(
             UUID boardId, UUID slotId, UUID claimId, byte[] canonicalPayload, Instant expiresAt) {
         return update(boardId, slotId, claimId, canonicalPayload, expiresAt, draftEpoch(boardId, slotId));
+    }
+
+    public synchronized FullUpdate beginFullUpdate(UUID boardId, UUID slotId) {
+        if (fencedBoards.contains(boardId)) throw new OutOfSyncException();
+        var pending = pendingUpdates.computeIfAbsent(boardId, ignored -> new PendingUpdates());
+        pending.active++;
+        return new FullUpdate(boardId, slotId, draftEpoch(boardId, slotId), pending.generation);
+    }
+
+    public synchronized Version update(
+            UUID boardId,
+            UUID slotId,
+            UUID claimId,
+            byte[] canonicalPayload,
+            Instant expiresAt,
+            FullUpdate fullUpdate) {
+        ensureCurrent(boardId, slotId, fullUpdate);
+        return update(boardId, slotId, claimId, canonicalPayload, expiresAt, fullUpdate.draftEpoch);
     }
 
     public synchronized Version update(
@@ -95,9 +116,12 @@ public final class LiveSignatureRegistry {
                 return applyLocked(boardId, slotId, claimId, delta, null, now);
             }
         }
-        var authorizedUntil = authorize.get();
-        synchronized (this) {
-            return applyLocked(boardId, slotId, claimId, delta, authorizedUntil, clock.instant());
+        try (var pendingUpdate = beginFullUpdate(boardId, slotId)) {
+            var authorizedUntil = authorize.get();
+            synchronized (this) {
+                ensureCurrent(boardId, slotId, pendingUpdate);
+                return applyLocked(boardId, slotId, claimId, delta, authorizedUntil, clock.instant());
+            }
         }
     }
 
@@ -184,6 +208,8 @@ public final class LiveSignatureRegistry {
     }
 
     public synchronized void invalidateBoard(UUID boardId) {
+        var pending = pendingUpdates.get(boardId);
+        if (pending != null) pending.generation++;
         drafts.forEach((slotId, current) -> {
             if (current.boardId().equals(boardId)) {
                 reset(boardId, slotId, null, false, null, false);
@@ -197,6 +223,21 @@ public final class LiveSignatureRegistry {
 
     public synchronized void unfenceBoard(UUID boardId) {
         fencedBoards.remove(boardId);
+    }
+
+    private synchronized void finishFullUpdate(FullUpdate fullUpdate) {
+        if (fullUpdate.closed) return;
+        fullUpdate.closed = true;
+        var pending = pendingUpdates.get(fullUpdate.boardId);
+        if (pending != null && --pending.active == 0) pendingUpdates.remove(fullUpdate.boardId);
+    }
+
+    private void ensureCurrent(UUID boardId, UUID slotId, FullUpdate fullUpdate) {
+        var pending = pendingUpdates.get(boardId);
+        if (fullUpdate.closed || !fullUpdate.boardId.equals(boardId) || !fullUpdate.slotId.equals(slotId)
+                || pending == null || pending.generation != fullUpdate.generation) {
+            throw new OutOfSyncException();
+        }
     }
 
     @Scheduled(fixedDelay = 5_000)
@@ -315,6 +356,26 @@ public final class LiveSignatureRegistry {
     public record DeltaResult(long draftEpoch, long revision, boolean duplicate) {}
     public record Snapshot(JsonNode signature, long draftEpoch, long revision) {}
 
+    public final class FullUpdate implements AutoCloseable {
+        private final UUID boardId;
+        private final UUID slotId;
+        private final long draftEpoch;
+        private final long generation;
+        private boolean closed;
+
+        private FullUpdate(UUID boardId, UUID slotId, long draftEpoch, long generation) {
+            this.boardId = boardId;
+            this.slotId = slotId;
+            this.draftEpoch = draftEpoch;
+            this.generation = generation;
+        }
+
+        @Override
+        public void close() {
+            finishFullUpdate(this);
+        }
+    }
+
     public static final class OutOfSyncException extends RuntimeException {}
     public static final class InvalidDeltaException extends RuntimeException {}
 
@@ -329,6 +390,11 @@ public final class LiveSignatureRegistry {
             long clientSequence,
             DraftDelta lastDelta,
             int openStroke) {}
+
+    private static final class PendingUpdates {
+        private long generation;
+        private int active;
+    }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
     private record PublicDraftEvent(

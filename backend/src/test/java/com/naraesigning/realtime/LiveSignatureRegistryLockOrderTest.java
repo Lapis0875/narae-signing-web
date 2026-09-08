@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import org.junit.jupiter.api.Test;
 
@@ -76,6 +77,58 @@ class LiveSignatureRegistryLockOrderTest {
                 closeMayFence.countDown();
             }
         }
+    }
+
+    @Test
+    void terminalInvalidationDuringColdAuthorizationDoesNotCacheStaleClaim() throws Exception {
+        // Given
+        var registry = new LiveSignatureRegistry(new ObjectMapper(), Clock.fixed(NOW, ZoneOffset.UTC),
+                mock(BoardRealtimeRegistry.class), mock(PublicBoardRealtimeRegistry.class));
+        var authorized = new CountDownLatch(1);
+        var resume = new CountDownLatch(1);
+
+        // When
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var staleDelta = workers.submit(() -> {
+                try {
+                    registry.apply(BOARD, SLOT, CLAIM, firstDelta(), () -> {
+                        authorized.countDown();
+                        await(resume);
+                        return NOW.plusSeconds(90);
+                    });
+                    return false;
+                } catch (LiveSignatureRegistry.OutOfSyncException exception) {
+                    return true;
+                }
+            });
+            assertThat(authorized.await(2, SECONDS)).isTrue();
+            registry.fenceBoard(BOARD);
+            registry.invalidateBoard(BOARD);
+            registry.unfenceBoard(BOARD);
+            resume.countDown();
+            assertThat(staleDelta.get(2, SECONDS)).isTrue();
+
+            // Then
+            var reauthorized = new AtomicBoolean();
+            try {
+                registry.apply(BOARD, SLOT, CLAIM, firstDelta(), () -> {
+                    reauthorized.set(true);
+                    return NOW.plusSeconds(90);
+                });
+            } catch (LiveSignatureRegistry.OutOfSyncException expected) {
+                // The delta protocol requires a full reset after fresh authorization.
+            }
+            assertThat(reauthorized).isTrue();
+            assertThat(registry.snapshot(BOARD, SLOT).signature()).isNull();
+            System.out.println("RACE coldDelta stale=rejected nextPacket=reauthorized finalDraft=absent");
+        } finally {
+            resume.countDown();
+        }
+    }
+
+    private static DraftDelta firstDelta() {
+        return new DraftDelta(DraftDelta.Operation.BEGIN, 1, 0, 0, 0,
+                List.of(new DraftDelta.Point(1, 2)));
     }
 
     private static Instant authorize(CountDownLatch entered, ReentrantLock boardLock) {

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.naraesigning.board.api.BoardLifecycleEvent;
 import com.naraesigning.realtime.LiveSignatureRegistry;
 import com.naraesigning.session.SignerSessionContract;
 import java.nio.charset.StandardCharsets;
@@ -16,6 +17,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 
 class SignatureDraftTerminalRaceTest {
@@ -23,6 +25,7 @@ class SignatureDraftTerminalRaceTest {
     private static final UUID SLOT_ID = UUID.fromString("20000000-0000-0000-0000-000000000002");
     private static final UUID ROSTER_ID = UUID.fromString("30000000-0000-0000-0000-000000000003");
     private static final UUID CLAIM_ID = UUID.fromString("40000000-0000-0000-0000-000000000004");
+    private static final UUID OTHER_BOARD_ID = UUID.fromString("50000000-0000-0000-0000-000000000005");
     private static final Instant NOW = Instant.parse("2026-09-03T00:00:00Z");
 
     @Test
@@ -55,6 +58,85 @@ class SignatureDraftTerminalRaceTest {
                     .isEqualTo("signature_draft_out_of_sync");
             assertThat(registry.snapshot(BOARD_ID, SLOT_ID).signature()).isNull();
             System.out.println("RACE cancel delayedPut=signature_draft_out_of_sync finalDraft=absent");
+        } finally {
+            repository.resume.countDown();
+        }
+    }
+
+    @Test
+    void delayedFirstFullPutCannotRestoreAbsentDraftAfterBoardCloseAndReopen() throws Exception {
+        assertTerminalInvalidationRejectsDelayedFirstPut(registry ->
+                registry.invalidateBoard(new BoardLifecycleEvent(BOARD_ID, "CLOSED")), "close");
+    }
+
+    @Test
+    void delayedFirstFullPutCannotRestoreAbsentDraftAfterBoardDeletionCompletes() throws Exception {
+        assertTerminalInvalidationRejectsDelayedFirstPut(
+                registry -> registry.invalidateBoard(BOARD_ID), "delete");
+    }
+
+    @Test
+    void unrelatedBoardInvalidationDoesNotRejectPendingFirstFullPut() throws Exception {
+        // Given
+        var repository = new PausingRepository();
+        var registry = registry();
+        var service = new LiveSignatureService(repository, registry);
+        repository.pauseAfterAuthorization();
+
+        // When
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var delayedPut = workers.submit(() -> {
+                try {
+                    service.update(session(), CLAIM_ID, payload(3, 4), NOW.plusSeconds(1));
+                    return null;
+                } catch (SignatureSubmitException exception) {
+                    return exception;
+                }
+            });
+            assertThat(repository.authorized.await(5, TimeUnit.SECONDS)).isTrue();
+            registry.invalidateBoard(OTHER_BOARD_ID);
+            repository.resume.countDown();
+
+            // Then
+            assertThat(delayedPut.get()).isNull();
+            assertThat(registry.snapshot(BOARD_ID, SLOT_ID).signature()).isNotNull();
+            System.out.println("RACE unrelatedBoard delayedPut=accepted finalDraft=visible");
+        } finally {
+            repository.resume.countDown();
+        }
+    }
+
+    private static void assertTerminalInvalidationRejectsDelayedFirstPut(
+            Consumer<LiveSignatureRegistry> invalidate, String terminalAction) throws Exception {
+        var repository = new PausingRepository();
+        var registry = registry();
+        var service = new LiveSignatureService(repository, registry);
+        repository.pauseAfterAuthorization();
+
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var delayedPut = workers.submit(() -> {
+                try {
+                    service.update(session(), CLAIM_ID, payload(3, 4), NOW.plusSeconds(1));
+                    return null;
+                } catch (SignatureSubmitException exception) {
+                    return exception;
+                }
+            });
+            assertThat(repository.authorized.await(5, TimeUnit.SECONDS)).isTrue();
+            registry.fenceBoard(BOARD_ID);
+            invalidate.accept(registry);
+            registry.unfenceBoard(BOARD_ID);
+            repository.resume.countDown();
+
+            assertThat(delayedPut.get())
+                    .isNotNull()
+                    .extracting(SignatureSubmitException::code)
+                    .isEqualTo("signature_draft_out_of_sync");
+            assertThat(registry.snapshot(BOARD_ID, SLOT_ID).signature()).isNull();
+            assertThat(service.update(session(), CLAIM_ID, payload(5, 6), NOW.plusSeconds(2))).isNotNull();
+            assertThat(registry.snapshot(BOARD_ID, SLOT_ID).signature()).isNotNull();
+            System.out.printf("RACE %s stalePut=signature_draft_out_of_sync staleDraft=absent freshPut=accepted%n",
+                    terminalAction);
         } finally {
             repository.resume.countDown();
         }

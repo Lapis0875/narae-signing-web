@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.naraesigning.realtime.LiveSignatureRegistry;
 import com.naraesigning.session.SignerSessionContract;
@@ -24,6 +25,8 @@ class LiveSignatureServiceTest {
     void keepsASecondSignerOutUntilTheCurrentDraftLeaseEndsOrIsReleased() {
         var repository = new MemoryRepository();
         var drafts = mock(LiveSignatureRegistry.class);
+        var fullUpdate = mock(LiveSignatureRegistry.FullUpdate.class);
+        when(drafts.beginFullUpdate(BOARD_ID, SLOT_ID)).thenReturn(fullUpdate);
         var service = new LiveSignatureService(repository, drafts);
         var firstClaim = UUID.randomUUID();
 
@@ -36,13 +39,15 @@ class LiveSignatureServiceTest {
                 .isInstanceOfSatisfying(SignatureSubmitException.class,
                         exception -> assertThat(exception.code()).isEqualTo("signature_in_progress"));
         verify(drafts).update(eq(BOARD_ID), eq(SLOT_ID), eq(firstClaim), any(byte[].class),
-                eq(NOW.plus(LiveSignatureService.LEASE_DURATION)), eq(0L));
+                eq(NOW.plus(LiveSignatureService.LEASE_DURATION)), eq(fullUpdate));
     }
 
     @Test
     void releasesOnlyTheCurrentSessionClaimWhenSigningIsCancelled() {
         var repository = new MemoryRepository();
         var drafts = mock(LiveSignatureRegistry.class);
+        when(drafts.beginFullUpdate(BOARD_ID, SLOT_ID))
+                .thenReturn(mock(LiveSignatureRegistry.FullUpdate.class));
         var service = new LiveSignatureService(repository, drafts);
         var claim = UUID.randomUUID();
         service.update(session(), claim, payload(), NOW);
@@ -58,6 +63,8 @@ class LiveSignatureServiceTest {
     void clearsTheVisibleDraftButKeepsTheCurrentSignerLease() {
         var repository = new MemoryRepository();
         var drafts = mock(LiveSignatureRegistry.class);
+        when(drafts.beginFullUpdate(BOARD_ID, SLOT_ID))
+                .thenReturn(mock(LiveSignatureRegistry.FullUpdate.class));
         var service = new LiveSignatureService(repository, drafts);
         var claim = UUID.randomUUID();
         service.update(session(), claim, payload(), NOW);

@@ -20,17 +20,19 @@ final class LiveSignatureService {
             SignatureSession session, UUID claimId, SignaturePayload payload, Instant now) {
         if (!session.active() || claimId == null) throw SignatureSubmitException.sessionExpired();
         var signer = session.value();
-        var expectedDraftEpoch = drafts.draftEpoch(signer.boardId(), signer.slotId());
-        var updated = repository.withBoardThenSlotLocked(signer.boardId(), signer.slotId(), (state, writer) -> {
-            SignatureSubmitService.validate(signer, state);
-            SignatureSubmitService.validateClaim(state, claimId, now);
-            var expiresAt = now.plus(LEASE_DURATION);
-            writer.renewClaim(claimId, expiresAt);
-            return new UpdatedDraft(signer.boardId(), signer.slotId(), claimId, expiresAt);
-        });
         try {
-            return drafts.update(updated.boardId(), updated.slotId(), updated.claimId(),
-                    payload.canonicalBytes(), updated.expiresAt(), expectedDraftEpoch);
+            try (var fullUpdate = drafts.beginFullUpdate(signer.boardId(), signer.slotId())) {
+                var updated = repository.withBoardThenSlotLocked(
+                        signer.boardId(), signer.slotId(), (state, writer) -> {
+                            SignatureSubmitService.validate(signer, state);
+                            SignatureSubmitService.validateClaim(state, claimId, now);
+                            var expiresAt = now.plus(LEASE_DURATION);
+                            writer.renewClaim(claimId, expiresAt);
+                            return new UpdatedDraft(signer.boardId(), signer.slotId(), claimId, expiresAt);
+                        });
+                return drafts.update(updated.boardId(), updated.slotId(), updated.claimId(),
+                        payload.canonicalBytes(), updated.expiresAt(), fullUpdate);
+            }
         } catch (LiveSignatureRegistry.OutOfSyncException exception) {
             throw SignatureSubmitException.draftOutOfSync();
         }
