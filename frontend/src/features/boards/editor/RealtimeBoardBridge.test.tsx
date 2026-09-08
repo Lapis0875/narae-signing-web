@@ -18,14 +18,27 @@ class FakeEventSource {
 describe("editor realtime bridge", () => {
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); FakeEventSource.latest = null })
 
-  it("refetches the authoritative editor snapshot for an event", async () => {
+  it.each(["signature-submitted", "signature-reset", "layout-updated", "background-updated", "board-updated", "board-state-updated"])("refetches the authoritative editor snapshot for %s", async (eventType) => {
     // Given
     vi.stubGlobal("EventSource", FakeEventSource)
     const refetch = vi.fn().mockResolvedValue(undefined)
     render(<RealtimeBoardBridge boardId="00000000-0000-4000-8000-000000000001" refetchSnapshot={refetch} />)
 
     // When
-    await act(async () => { FakeEventSource.latest?.listeners.get("signature-submitted")?.(new Event("signature-submitted")) })
+    await act(async () => { FakeEventSource.latest?.listeners.get(eventType)?.(new Event(eventType)) })
+
+    // Then
+    expect(refetch).toHaveBeenCalledOnce()
+  })
+
+  it("refreshes editor resources when the connection opens", async () => {
+    // Given
+    vi.stubGlobal("EventSource", FakeEventSource)
+    const refetch = vi.fn().mockResolvedValue(undefined)
+    render(<RealtimeBoardBridge boardId="00000000-0000-4000-8000-000000000001" refetchSnapshot={refetch} />)
+
+    // When
+    await act(async () => { FakeEventSource.latest?.onopen?.() })
 
     // Then
     expect(refetch).toHaveBeenCalledOnce()

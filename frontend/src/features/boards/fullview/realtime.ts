@@ -126,10 +126,15 @@ export function reconnectDelay(attempt: number): number {
   return Math.min(4_000, 250 * 2 ** attempt)
 }
 
+type BoardRealtimeOptions = {
+  readonly refetchBackground?: () => Promise<unknown>
+  readonly includeDrafts?: boolean
+}
+
 function useRealtime(
   eventUrl: string,
   refetchSnapshot: () => Promise<unknown>,
-  refetchBackground?: () => Promise<unknown>,
+  { refetchBackground, includeDrafts = true }: BoardRealtimeOptions = {},
 ): void {
   useEffect(() => {
     if (typeof EventSource === "undefined") return
@@ -165,6 +170,7 @@ function useRealtime(
       source = new EventSource(eventUrl)
       source.onopen = () => { attempt = 0; refreshSnapshot(); refreshBackground?.() }
       for (const type of EVENT_TYPES) source.addEventListener(type, () => {
+        if (!includeDrafts && (type === "signature-draft" || type === "signature-draft-cleared")) return
         refreshSnapshot()
         if (!type.startsWith("signature-")) refreshBackground?.()
       })
@@ -182,15 +188,15 @@ function useRealtime(
       source?.close()
       if (reconnectTimer !== null) clearTimeout(reconnectTimer)
     }
-  }, [eventUrl, refetchBackground, refetchSnapshot])
+  }, [eventUrl, includeDrafts, refetchBackground, refetchSnapshot])
 }
 
 export function useBoardRealtime(
   boardId: string,
   refetchSnapshot: () => Promise<unknown>,
-  refetchBackground?: () => Promise<unknown>,
+  options: BoardRealtimeOptions = {},
 ): void {
-  useRealtime(`/api/v1/admin/boards/${boardId}/events`, refetchSnapshot, refetchBackground)
+  useRealtime(`/api/v1/admin/boards/${boardId}/events`, refetchSnapshot, options)
 }
 
 export function usePublicBoardRealtime(

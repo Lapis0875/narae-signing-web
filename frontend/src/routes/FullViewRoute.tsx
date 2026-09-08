@@ -27,7 +27,7 @@ export function FullViewRoute() {
   const refetchBackground = useCallback(async () => {
     await background.refetch()
   }, [background.refetch])
-  useBoardRealtime(boardId, refetchSnapshot, refetchBackground)
+  useBoardRealtime(boardId, refetchSnapshot, { refetchBackground })
 
   const canvas = snapshot.data === undefined || background.isPending || snapshot.error !== null || background.error !== null
     ? <div aria-busy={snapshot.isPending || background.isPending} className="full-view-canvas full-view-state" data-testid="full-view-canvas" role={snapshot.error !== null || background.error !== null ? "alert" : "status"}><p>{snapshot.error !== null || background.error !== null ? "전체보기를 불러오지 못했습니다." : "전체보기를 불러오는 중입니다."}</p></div>

@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -51,6 +51,7 @@ afterEach(() => {
   setCsrfToken(null)
   document.cookie = "XSRF-TOKEN=; Max-Age=0; Path=/"
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
   Reflect.deleteProperty(HTMLDialogElement.prototype, "close")
   Reflect.deleteProperty(HTMLDialogElement.prototype, "showModal")
 })
@@ -86,6 +87,30 @@ function renderEditor(
 }
 
 describe("BoardEditorRoute", () => {
+  it.each(["signature-draft", "signature-draft-cleared"])("does not reload editor resources for %s", async (eventType) => {
+    // Given
+    const listeners = new Map<string, EventListener>()
+    vi.stubGlobal("EventSource", class {
+      onerror: (() => void) | null = null
+      onopen: (() => void) | null = null
+      addEventListener(type: string, listener: EventListener) { listeners.set(type, listener) }
+      close() {}
+    })
+    renderEditor(() => new Response(null, { status: 204 }), "서명 진행")
+    await screen.findByRole("application", { name: "서명 보드 캔버스" })
+    const fetch = vi.mocked(globalThis.fetch)
+    fetch.mockClear()
+
+    // When
+    for (let index = 0; index < 3; index += 1) {
+      await act(async () => { listeners.get(eventType)?.(new Event(eventType)) })
+    }
+
+    // Then
+    expect(fetch).not.toHaveBeenCalled()
+    expect(screen.getByRole("application", { name: "서명 보드 캔버스" })).toBeVisible()
+  })
+
   it("Given the editor When it mounts Then owner realtime refetch connects", async () => {
     // Given
     const connections: string[] = []
