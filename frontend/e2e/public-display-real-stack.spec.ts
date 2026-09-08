@@ -139,11 +139,15 @@ test.describe("@real public display composed contract", () => {
         200,
       );
       await expect(signer.getByTestId("public-signer-drawing")).toBeVisible();
+      await expect
+        .poll(() => draftResponses.some((entry) =>
+          entry.startsWith("PUT ") && entry.endsWith(" 200")))
+        .toBe(true);
 
       const failedOfflineDraft = signer.waitForEvent(
         "requestfailed",
         (request) =>
-          new URL(request.url()).pathname.includes("/signing-session/draft"),
+          new URL(request.url()).pathname.endsWith("/signing-session/draft/delta"),
       );
       const draftsBeforeOffline = draftResponses.length;
       await signerContext.setOffline(true);
@@ -158,7 +162,7 @@ test.describe("@real public display composed contract", () => {
         .toBe(true);
       const firstSlot = displayOne.locator("[data-slot-id] canvas").first();
       await expect(firstSlot).toBeVisible();
-      expect(await blackPixelCount(firstSlot)).toBeGreaterThan(25);
+      await expect.poll(() => blackPixelCount(firstSlot)).toBeGreaterThan(25);
       await displayOne.screenshot({
         path: path.join(evidenceDir, "task-8-progressive-black-ink.png"),
         fullPage: true,
@@ -215,11 +219,10 @@ test.describe("@real public display composed contract", () => {
       ).toBeVisible();
       await drawStroke(concurrentSigner, 0.45);
       await expect(displayOne.locator("[data-slot-id] canvas")).toHaveCount(2);
-      expect(
-        await blackPixelCount(
-          displayOne.locator("[data-slot-id] canvas").last(),
-        ),
-      ).toBeGreaterThan(25);
+      await expect
+        .poll(() => blackPixelCount(
+          displayOne.locator("[data-slot-id] canvas").last()))
+        .toBeGreaterThan(25);
 
       await signer.getByRole("button", { name: "서명 취소" }).click();
       await expect(signer.getByTestId("public-signer-identify")).toBeVisible();
@@ -234,9 +237,18 @@ test.describe("@real public display composed contract", () => {
       await expect(
         concurrentSigner.getByTestId("public-signer-drawing"),
       ).toBeVisible();
+      const eventsBeforeFinalStroke = draftEventPayloads.length;
       await drawStroke(concurrentSigner, 0.5);
+      await expect
+        .poll(() => parseDraftEventPayloads(
+          draftEventPayloads.slice(eventsBeforeFinalStroke),
+        ).some((event) => event.operation === "end"))
+        .toBe(true);
       await expect(displayOne.locator("[data-slot-id] canvas")).toHaveCount(1);
       const finalCanvas = displayOne.locator("[data-slot-id] canvas").first();
+      await displayOne.evaluate(() => new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }));
       const draftGeometry = await canvasData(finalCanvas);
       expect(await blackPixelCount(finalCanvas)).toBeGreaterThan(25);
       await concurrentSigner.getByRole("button", { name: "서명 제출" }).click();
