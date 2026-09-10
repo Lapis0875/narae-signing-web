@@ -120,21 +120,26 @@ export async function adminJson(
   method: "GET" | "PATCH" | "POST",
   body?: string,
 ): Promise<JsonResult> {
+  const csrfHeader =
+    method === "GET"
+      ? undefined
+      : (await page.context().cookies([page.url()])).find(
+          (cookie) => cookie.name === "XSRF-TOKEN",
+        )?.value;
+  if (method !== "GET" && csrfHeader === undefined)
+    throw new Error("Task 8 CSRF cookie missing");
   return page.evaluate(
     async ({
       body: requestBody,
+      csrfHeader: requestCsrfHeader,
       method: requestMethod,
       pathName: requestPath,
     }) => {
       const headers = new Headers();
       if (requestMethod !== "GET") {
-        const token = document.cookie
-          .split(";")
-          .map((cookie) => cookie.trim())
-          .find((cookie) => cookie.startsWith("XSRF-TOKEN="))
-          ?.slice("XSRF-TOKEN=".length);
-        if (token === undefined) throw new Error("Task 8 CSRF cookie missing");
-        headers.set("X-XSRF-TOKEN", token);
+        if (requestCsrfHeader === undefined)
+          throw new Error("Task 8 CSRF cookie missing");
+        headers.set("X-XSRF-TOKEN", requestCsrfHeader);
       }
       if (requestBody !== undefined)
         headers.set("Content-Type", "application/json");
@@ -146,7 +151,7 @@ export async function adminJson(
       });
       return { body: await response.json(), status: response.status };
     },
-    { body, method, pathName },
+    { body, csrfHeader, method, pathName },
   );
 }
 
