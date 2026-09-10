@@ -48,6 +48,7 @@ import json
 import os
 import pathlib
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -237,15 +238,23 @@ try:
     descendant_snapshot = scan_subtree()
 
     query_observations = []
+    selectors = (
+        ("owner-only", f"label=com.naraemedia.qa.owner={run_id}"),
+        ("project-only", f"label=com.naraemedia.qa.project={project}"),
+    )
     for kind in ("container", "network", "volume", "image"):
-        argv = ["docker", kind, "ls"]
-        if kind == "container":
-            argv.append("-a")
-        argv.extend(["-q", "--filter", f"label=com.naraemedia.qa.owner={run_id}", "--filter", f"label=com.naraemedia.qa.project={project}"])
-        completed = subprocess.run(argv, check=True, capture_output=True, text=True, timeout=15)
-        if completed.stderr or completed.stdout.split():
-            raise ValueError(f"fresh {kind} owner/project query was not empty")
-        query_observations.append({"kind": kind, "candidateCount": 0, "exitCode": 0})
+        for selector, filter_value in selectors:
+            argv = ["docker", kind, "ls"]
+            if kind == "container":
+                argv.append("-a")
+            argv.extend(["-q", "--filter", filter_value])
+            try:
+                completed = subprocess.run(argv, check=True, capture_output=True, text=True, timeout=15)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                raise ValueError(f"fresh {kind} {selector} query failed") from error
+            if completed.stderr or completed.stdout.split():
+                raise ValueError(f"fresh {kind} {selector} query was not empty")
+            query_observations.append({"kind": kind, "selector": selector, "candidateCount": 0, "exitCode": 0})
 
     os.lseek(registry_fd, 0, os.SEEK_SET)
     if hashlib.sha256(os.read(registry_fd, 1024 * 1024 + 1)).hexdigest() != expected_digest:
@@ -297,6 +306,11 @@ try:
     }
     if record.exists() or record.is_symlink():
         raise ValueError("recovery registration already exists")
+    def interrupt_registration(signum, _frame):
+        raise InterruptedError(f"recovery registration interrupted by signal {signum}")
+
+    signal.signal(signal.SIGTERM, interrupt_registration)
+    signal.signal(signal.SIGINT, interrupt_registration)
     fd, temporary = tempfile.mkstemp(prefix=".recovery-registration.", dir=record.parent)
     try:
         os.fchmod(fd, 0o600)
@@ -307,6 +321,8 @@ try:
             os.fsync(stream.fileno())
         if os.environ.get("INK_QA_RECOVERY_INTERRUPT_STAGE") == "before-publish":
             raise InterruptedError("recovery registration interrupted before publish")
+        if os.environ.get("INK_QA_RECOVERY_INTERRUPT_STAGE") == "pause-before-publish":
+            time.sleep(30)
         os.link(temporary, record, follow_symlinks=False)
         directory_fd = os.open(record.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
@@ -315,6 +331,8 @@ try:
             os.close(directory_fd)
         if os.environ.get("INK_QA_RECOVERY_INTERRUPT_STAGE") == "after-publish":
             raise InterruptedError("recovery registration interrupted after atomic publish")
+        if os.environ.get("INK_QA_RECOVERY_INTERRUPT_STAGE") == "pause-after-publish":
+            time.sleep(30)
     finally:
         if temporary and os.path.exists(temporary):
             os.unlink(temporary)
@@ -626,6 +644,29 @@ record_destructive_action() {
     destructive_action_count=$((destructive_action_count + 1))
     printf '{"sequence":%s,"action":"%s","identity":"%s"}\n' \
         "$destructive_action_count" "$action" "$identity" >> "$evidence_dir/destructive-actions.jsonl"
+}
+
+record_destructive_action_json() {
+    local description=$1
+    destructive_action_count=$((destructive_action_count + 1))
+    python3 - "$description" "$destructive_action_count" "$evidence_dir/destructive-actions.jsonl" <<'PY'
+import json
+import pathlib
+import sys
+
+description = json.loads(sys.argv[1])
+if (
+    not isinstance(description, dict)
+    or set(description) != {"action", "argv", "identity", "kind"}
+    or description["action"] != "docker-delete"
+    or not isinstance(description["argv"], list)
+    or not all(isinstance(item, str) and item for item in description["argv"])
+):
+    raise SystemExit("exact destructive action description is invalid")
+description["sequence"] = int(sys.argv[2])
+with pathlib.Path(sys.argv[3]).open("a", encoding="utf-8") as stream:
+    stream.write(json.dumps(description, separators=(",", ":"), sort_keys=True) + "\n")
+PY
 }
 
 docker_registry_action() {
@@ -963,7 +1004,7 @@ elif action == "validate-cleanup-plan":
     planned = json.loads(plan.read_text(encoding="utf-8"))
     if not stat.S_ISREG(plan_info.st_mode) or stat.S_IMODE(plan_info.st_mode) != 0o600 or planned != resources:
         raise ValueError("cleanup plan does not exactly match the revalidated registry")
-elif action == "delete-cleanup-item":
+elif action in {"describe-cleanup-item", "delete-cleanup-item"}:
     payload = load_registry()
     if payload["sealed"] is not True:
         raise ValueError("cleanup deletion requires a sealed registry")
@@ -983,6 +1024,9 @@ elif action == "delete-cleanup-item":
     if kind in {"container", "volume"}:
         argv.append("-f")
     argv.append(identity)
+    if action == "describe-cleanup-item":
+        print(json.dumps({"action": "docker-delete", "argv": argv, "identity": identity, "kind": kind}, separators=(",", ":"), sort_keys=True))
+        raise SystemExit
     run(argv)
     payload["resources"].remove(resource)
     names = resource["declaredName"] if kind == "image" else [resource["declaredName"]]
@@ -1243,6 +1287,7 @@ cleanup() {
     local cleanup_reason=none
     local cleanup_plan="$evidence_dir/docker-cleanup-plan.json"
     local cleanup_count=0
+    local next_action=""
     if [[ "$cleanup_started" == true ]]; then
         return
     fi
@@ -1280,7 +1325,19 @@ cleanup() {
                     retain_cleanup launcher-signal-after-revalidation-before-exact-mutation
                     break
                 fi
-                record_destructive_action docker-delete "next-exact-registered-resource"
+                if ! next_action=$(run_signal_aware_registry_action describe-cleanup-item "$cleanup_plan" \
+                    2>> "$evidence_dir/cleanup-docker.stderr"); then
+                    retain_cleanup exact-action-description-failed
+                    break
+                fi
+                if [[ -z "$next_action" ]]; then
+                    retain_cleanup empty-exact-action-description
+                    break
+                fi
+                if ! record_destructive_action_json "$next_action"; then
+                    retain_cleanup exact-action-journal-failed
+                    break
+                fi
                 if ! run_signal_aware_registry_action delete-cleanup-item "$cleanup_plan" \
                     >> "$evidence_dir/cleanup-docker.stdout" 2>> "$evidence_dir/cleanup-docker.stderr"; then
                     retain_cleanup bounded-exact-mutation-failed
