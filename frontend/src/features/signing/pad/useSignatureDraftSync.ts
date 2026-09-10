@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type RefObject } from "react";
+import { type RefObject, useCallback, useEffect, useRef } from "react";
 import type {
   SignatureDraftDelta,
   SignatureDraftVersion,
@@ -18,12 +18,12 @@ type PendingDelta = {
 type DraftSyncOptions = {
   readonly payload: () => SignaturePayload | null;
   readonly readyForFull: () => boolean;
-  readonly sendDelta: ((
-    delta: SignatureDraftDelta,
-  ) => Promise<SignatureDraftVersion | null>) | undefined;
-  readonly sendFull: ((
-    payload: SignaturePayload,
-  ) => Promise<SignatureDraftVersion | null>) | undefined;
+  readonly sendDelta:
+    | ((delta: SignatureDraftDelta) => Promise<SignatureDraftVersion | null>)
+    | undefined;
+  readonly sendFull:
+    | ((payload: SignaturePayload) => Promise<SignatureDraftVersion | null>)
+    | undefined;
   readonly setFailure: () => void;
   readonly stopping: RefObject<boolean>;
 };
@@ -44,9 +44,15 @@ export function useSignatureDraftSync({
   const recoveryRef = useRef(false);
   const fullSyncRef = useRef(false);
   const initialSyncRef = useRef(true);
-  const initialPayloadRef = useRef<SignaturePayload>({ strokes: [], version: 1 });
+  const initialPayloadRef = useRef<SignaturePayload>({
+    strokes: [],
+    version: 1,
+  });
   const sequenceRef = useRef(0);
-  const versionRef = useRef<SignatureDraftVersion>({ draftEpoch: 0, revision: 0 });
+  const versionRef = useRef<SignatureDraftVersion>({
+    draftEpoch: 0,
+    revision: 0,
+  });
 
   const flush = useCallback(() => {
     if (
@@ -58,7 +64,8 @@ export function useSignatureDraftSync({
     ) {
       return;
     }
-    const sendAuthoritative = initialSyncRef.current || recoveryRef.current || fullSyncRef.current;
+    const sendAuthoritative =
+      initialSyncRef.current || recoveryRef.current || fullSyncRef.current;
     const next = pendingRef.current[0];
     if (!sendAuthoritative && next === undefined) {
       return;
@@ -71,7 +78,9 @@ export function useSignatureDraftSync({
       const currentPayload = initialSyncRef.current
         ? initialPayloadRef.current
         : payload();
-      const reflectedCount = initialSyncRef.current ? 0 : pendingRef.current.length;
+      const reflectedCount = initialSyncRef.current
+        ? 0
+        : pendingRef.current.length;
       if (currentPayload === null) {
         setFailure();
         sendingRef.current = false;
@@ -102,11 +111,7 @@ export function useSignatureDraftSync({
         )
         .then((saved) => {
           sendingRef.current = false;
-          if (
-            saved &&
-            mountedRef.current &&
-            timerRef.current === null
-          ) {
+          if (saved && mountedRef.current && timerRef.current === null) {
             queueMicrotask(flush);
           }
         });
@@ -167,26 +172,32 @@ export function useSignatureDraftSync({
     void request;
   }, [payload, readyForFull, sendDelta, sendFull, setFailure, stopping]);
 
-  const schedule = useCallback((delay = 50) => {
-    if (sendFull === undefined || sendDelta === undefined) {
-      return;
-    }
-    if (timerRef.current !== null) {
-      if (delay > 0) {
+  const schedule = useCallback(
+    (delay = 50) => {
+      if (sendFull === undefined || sendDelta === undefined) {
         return;
       }
-      clearTimeout(timerRef.current);
-    }
-    timerRef.current = setTimeout(() => {
-      timerRef.current = null;
-      flush();
-    }, delay);
-  }, [flush, sendDelta, sendFull]);
+      if (timerRef.current !== null) {
+        if (delay > 0) {
+          return;
+        }
+        clearTimeout(timerRef.current);
+      }
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        flush();
+      }, delay);
+    },
+    [flush, sendDelta, sendFull],
+  );
 
-  const queue = useCallback((delta: PendingDelta, immediate = false) => {
-    pendingRef.current.push(delta);
-    schedule(immediate ? 0 : 50);
-  }, [schedule]);
+  const queue = useCallback(
+    (delta: PendingDelta, immediate = false) => {
+      pendingRef.current.push(delta);
+      schedule(immediate ? 0 : 50);
+    },
+    [schedule],
+  );
 
   const replace = useCallback(() => {
     fullSyncRef.current = true;
@@ -215,11 +226,19 @@ export function useSignatureDraftSync({
     return () => clearInterval(heartbeat);
   }, [flush, readyForFull, sendDelta, sendFull]);
 
-  useEffect(() => () => {
-    if (timerRef.current !== null) {
-      clearTimeout(timerRef.current);
-    }
-  }, []);
+  useEffect(() => {
+    window.addEventListener("online", flush);
+    return () => window.removeEventListener("online", flush);
+  }, [flush]);
+
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current);
+      }
+    },
+    [],
+  );
 
   const stop = useCallback(async () => {
     stopping.current = true;

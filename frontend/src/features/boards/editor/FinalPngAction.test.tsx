@@ -63,6 +63,7 @@ function renderAction(status: Board["status"]) {
     createdAt: "2026-08-21T00:00:00.000Z",
     id: boardId,
     shareLinkVersion: 1,
+    signatureInkColor: "black",
     status,
     title: "Synthetic",
     updatedAt: "2026-08-21T00:00:00.000Z",

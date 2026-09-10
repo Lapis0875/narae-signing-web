@@ -7,7 +7,6 @@ const entry = {
   id: "31111111-1111-4111-8111-111111111111",
   identity: { job: "담당", name: "한별", organization: "나래" },
   slot: {
-    backgroundColor: "transparent",
     height: 0.2,
     id: "21111111-1111-4111-8111-111111111111",
     placementStatus: "PLACED",

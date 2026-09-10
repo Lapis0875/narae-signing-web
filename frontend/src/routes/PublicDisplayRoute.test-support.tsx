@@ -51,6 +51,7 @@ export function snapshotResponse(): Response {
     boardId,
     canvasHeight: 600,
     canvasWidth: 800,
+    signatureInkColor: "black",
     slots: [],
   })
 }

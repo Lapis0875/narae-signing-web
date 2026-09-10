@@ -8,7 +8,6 @@ export const signatureSchema = z.strictObject({
   version: z.literal(1),
 })
 const slotSchema = z.strictObject({
-  background: z.enum(["transparent", "white"]),
   draftEpoch: z.number().int().nonnegative().default(0),
   draftSignature: signatureSchema.nullable(),
   height: z.number().positive(),
@@ -24,6 +23,7 @@ export const fullViewSnapshotSchema = z.strictObject({
   boardId: z.uuid(),
   canvasHeight: z.number().int().positive(),
   canvasWidth: z.number().int().positive(),
+  signatureInkColor: z.enum(["black", "white"]),
   slots: z.array(slotSchema),
 })
 

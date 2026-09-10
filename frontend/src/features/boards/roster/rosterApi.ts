@@ -9,7 +9,6 @@ export const rosterIdentitySchema = z.strictObject({
 })
 
 const slotSchema = z.strictObject({
-  backgroundColor: z.string().nullable(),
   height: z.number().nullable(),
   id: z.uuid(),
   placementStatus: z.enum(["UNPLACED", "PLACED"]),
