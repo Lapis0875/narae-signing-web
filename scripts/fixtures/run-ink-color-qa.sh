@@ -95,7 +95,6 @@ import json
 import os
 import pathlib
 import stat
-import subprocess
 import sys
 import tempfile
 import time
@@ -146,9 +145,7 @@ if not (
 atomic(state, {"executorPid": pid, "state": "dispatching", "destructiveCommandIssued": True})
 with trace.open("a", encoding="utf-8") as stream:
     stream.write(json.dumps({"event":"root-executor-command","ownerPid":int(registry_value["ownerPid"]),"executorPid":pid,"executorIssued":True}, separators=(",", ":")) + "\n")
-result = subprocess.run(["find", str(root), "-depth", "-delete"], check=False)
-atomic(state, {"executorPid": pid, "state": "complete" if result.returncode == 0 else "find-failed", "destructiveCommandIssued": True, "exitCode": result.returncode})
-raise SystemExit(result.returncode)
+os.execvp("find", ["find", str(root), "-depth", "-delete"])
 PY
     root_executor_pid=$!
     active_cleanup_child_pid=$root_executor_pid
@@ -193,10 +190,86 @@ PY
 stop_root_removal_executor() {
     local pid=${root_executor_pid:-}
     [[ -n "$pid" ]] || return 0
-    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
+    terminate_exact_root_executor "$pid" || return 1
     active_cleanup_child_pid=""
     root_executor_pid=""
+}
+
+terminate_exact_root_executor() {
+    local pid=$1 attempt=0
+    [[ -n "$pid" ]] || return 0
+    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+    while kill -0 "$pid" 2>/dev/null && [[ $attempt -lt 100 ]]; do
+        sleep 0.02
+        attempt=$((attempt + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+        attempt=0
+        while kill -0 "$pid" 2>/dev/null && [[ $attempt -lt 100 ]]; do
+            sleep 0.02
+            attempt=$((attempt + 1))
+        done
+    fi
+    wait "$pid" 2>/dev/null || true
+    ! kill -0 "$pid" 2>/dev/null
+}
+
+reconcile_committed_root_handoff() {
+    local count
+    count=$(python3 - "$root_commit_receipt" "$evidence_dir/destructive-actions.jsonl" \
+        "$run_id" "$project" "$temporary_root" "$root_executor_pid" <<'PY'
+import json
+import os
+import pathlib
+import tempfile
+import sys
+
+receipt_path, ledger_path = map(pathlib.Path, sys.argv[1:3])
+run_id, project, root, executor_pid = sys.argv[3:]
+expected = {
+    "committed": True,
+    "executorPid": int(executor_pid),
+    "issuedActionCount": 1,
+    "project": project,
+    "root": root,
+    "runId": run_id,
+    "sealed": True,
+}
+if json.loads(receipt_path.read_text(encoding="utf-8")) != expected:
+    raise SystemExit("ROOT_COMMIT_RECEIPT_INVALID")
+rows = []
+if ledger_path.exists():
+    for line in ledger_path.read_text(encoding="utf-8").splitlines():
+        if line:
+            value = json.loads(line)
+            if not isinstance(value, dict):
+                raise SystemExit("ROOT_ACTION_LEDGER_INVALID")
+            rows.append(value)
+identity = f"executor:{executor_pid}"
+matches = [row for row in rows if row.get("action") == "root-delete-committed-handoff"]
+if any(row.get("identity") != identity for row in matches) or len(matches) > 1:
+    raise SystemExit("ROOT_ACTION_LEDGER_CONFLICT")
+if not matches:
+    rows.append({"sequence": len(rows) + 1, "action": "root-delete-committed-handoff", "identity": identity})
+else:
+    matches[0]["sequence"] = rows.index(matches[0]) + 1
+fd, temporary = tempfile.mkstemp(prefix=f".{ledger_path.name}.", dir=ledger_path.parent)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        for index, row in enumerate(rows, start=1):
+            row["sequence"] = index
+            stream.write(json.dumps(row, separators=(",", ":")) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, ledger_path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+print(len(rows))
+PY
+)
+    destructive_action_count=$count
 }
 
 commit_root_removal_handoff() {
@@ -251,9 +324,8 @@ finally:
     if os.path.exists(temporary):
         os.unlink(temporary)
 PY
-    destructive_action_count=$((destructive_action_count + 1))
-    printf '{"sequence":%s,"action":"root-delete-committed-handoff","identity":"executor:%s"}\n' \
-        "$destructive_action_count" "$root_executor_pid" >> "$evidence_dir/destructive-actions.jsonl"
+    cleanup_boundary root-after-receipt-before-ledger || return 143
+    reconcile_committed_root_handoff
     printf '{"event":"root-delete-committed","ownerPid":%s,"executorPid":%s,"executorIssued":true}\n' \
         "$$" "$root_executor_pid" >> "$evidence_dir/root-removal-lifecycle.jsonl"
 }
@@ -1003,12 +1075,11 @@ finalize_terminal_signal() {
     cleanup_retain=true
     signal_received=true
     local interrupted_executor_pid=${root_executor_pid:-$active_cleanup_child_pid}
-    if [[ -n "$active_cleanup_child_pid" ]]; then
-        kill -TERM -- "-$active_cleanup_child_pid" 2>/dev/null \
-            || kill -TERM "$active_cleanup_child_pid" 2>/dev/null || true
-        wait "$active_cleanup_child_pid" 2>/dev/null || true
-        active_cleanup_child_pid=""
+    local executor_contained=true
+    if [[ -n "$interrupted_executor_pid" ]]; then
+        terminate_exact_root_executor "$interrupted_executor_pid" || executor_contained=false
     fi
+    active_cleanup_child_pid=""
     local root_commit_issued=false
     if [[ -n "$root_commit_receipt" && -f "$root_commit_receipt" ]]; then
         if python3 - "$root_commit_receipt" "$run_id" "$project" "$temporary_root" \
@@ -1031,11 +1102,7 @@ raise SystemExit(0 if value == expected else 1)
 PY
         then
             root_commit_issued=true
-            if [[ $destructive_action_count -eq 0 ]]; then
-                destructive_action_count=1
-                printf '{"sequence":1,"action":"root-delete-committed-handoff","identity":"executor:%s"}\n' \
-                    "$interrupted_executor_pid" >> "$evidence_dir/destructive-actions.jsonl"
-            fi
+            reconcile_committed_root_handoff
         fi
     fi
     local root_state=unknown executor_alive=false
@@ -1046,7 +1113,7 @@ PY
         root_state=removed
         temporary_root_removed=true
     fi
-    if [[ -n "$interrupted_executor_pid" ]] && kill -0 "$interrupted_executor_pid" 2>/dev/null; then
+    if [[ "$executor_contained" != true ]] || { [[ -n "$interrupted_executor_pid" ]] && kill -0 "$interrupted_executor_pid" 2>/dev/null; }; then
         executor_alive=true
     fi
     umask 077
@@ -1621,7 +1688,7 @@ run_cleanup_self_test() {
     create_run
     local fixture=${INK_QA_CLEANUP_SELF_TEST_FIXTURE:-valid}
     case "$fixture" in
-        signal-local-validation-entry|signal-local-validation-entry-double|signal-after-local-validation|signal-after-local-validation-double|signal-final-empty-plan|signal-final-empty-plan-double|signal-root-removal-entry|signal-root-removal-entry-double|signal-before-success-publication|signal-before-success-publication-double|local-boundary-debug)
+        signal-local-validation-entry|signal-local-validation-entry-double|signal-after-local-validation|signal-after-local-validation-double|signal-final-empty-plan|signal-final-empty-plan-double|signal-root-removal-entry|signal-root-removal-entry-double|signal-before-success-publication|signal-before-success-publication-double|signal-root-after-receipt-before-ledger|signal-root-after-receipt-before-ledger-double|local-boundary-debug)
             local nested_credential="$temporary_root/secrets/master.key"
             registry_declare local process-intent cleanup-self-test-local-only
             registry_declare local credential-file "$nested_credential"

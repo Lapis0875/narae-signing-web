@@ -17,13 +17,13 @@ cleanup() {
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --red|--r2-red|--r4-red|--r5-red|--r6-red|--r7-red|--green) [[ -z "$mode" ]] || fail "choose exactly one mode"; mode=$1; shift ;;
+        --red|--r2-red|--r4-red|--r5-red|--r6-red|--r7-red|--r8-red|--green) [[ -z "$mode" ]] || fail "choose exactly one mode"; mode=$1; shift ;;
         --evidence-dir) [[ $# -ge 2 ]] || fail "--evidence-dir requires a path"; evidence_dir=$2; shift 2 ;;
         *) fail "unknown argument: $1" ;;
     esac
 done
-[[ "$mode" == --red || "$mode" == --r2-red || "$mode" == --r4-red || "$mode" == --r5-red || "$mode" == --r6-red || "$mode" == --r7-red || "$mode" == --green ]] \
-    || fail "--red, --r2-red, --r4-red, --r5-red, --r6-red, --r7-red, or --green is required"
+[[ "$mode" == --red || "$mode" == --r2-red || "$mode" == --r4-red || "$mode" == --r5-red || "$mode" == --r6-red || "$mode" == --r7-red || "$mode" == --r8-red || "$mode" == --green ]] \
+    || fail "--red, --r2-red, --r4-red, --r5-red, --r6-red, --r7-red, --r8-red, or --green is required"
 [[ -n "$evidence_dir" ]] || fail "--evidence-dir is required"
 evidence_dir=$(mkdir -p "$evidence_dir" && CDPATH= cd -- "$evidence_dir" && pwd)
 fake_root=$(mktemp -d "${TMPDIR:-/tmp}/ink-color-cleanup-guardrail.XXXXXX")
@@ -185,7 +185,7 @@ cat > "$fake_root/bin/find" <<'PY'
 import json, os, pathlib, signal, sys, time
 
 scenario = os.environ.get("FAKE_DOCKER_SCENARIO", "")
-if scenario in {"r7-executor-transition", "r7-executor-transition-double"}:
+if scenario in {"r7-executor-transition", "r7-executor-transition-double", "r8-resistant-find", "r8-resistant-find-double"}:
     registry = json.loads(pathlib.Path(os.environ["INK_QA_OWNERSHIP_REGISTRY"]).read_text())
     launcher = [item["identity"] for item in registry["intents"] if item.get("scope") == "local" and item.get("kind") == "launcher-pid"]
     if len(launcher) != 1:
@@ -202,13 +202,19 @@ if scenario in {"r7-executor-transition", "r7-executor-transition-double"}:
     else:
         log = pathlib.Path(os.environ["FAKE_ROOT_EXECUTOR_LOG"])
         with log.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps({"event":"fake-find-transition","launcherPid":int(launcher[0]),"executorPid":executor_pid,"realFindIssued":False}, separators=(",", ":")) + "\n")
+            stream.write(json.dumps({"event":"fake-find-transition","launcherPid":int(launcher[0]),"executorPid":executor_pid,"findPid":os.getpid(),"findPgid":os.getpgrp(),"realFindIssued":False}, separators=(",", ":")) + "\n")
         with pathlib.Path(os.environ["FAKE_SIGNAL_LOG"]).open("a", encoding="utf-8") as stream:
             for attempt in range(1, attempts + 1):
                 stream.write(json.dumps({"attempt":attempt,"stage":"executor-transition","targetPid":int(launcher[0]),"signal":"TERM"}, separators=(",", ":")) + "\n")
         for _ in range(attempts):
             try: os.kill(int(launcher[0]), signal.SIGTERM)
             except ProcessLookupError: pass
+        if scenario.startswith("r8-resistant-find"):
+            def ignored_term(signum, frame):
+                with log.open("a", encoding="utf-8") as stream:
+                    stream.write(json.dumps({"event":"fake-find-ignored-term","findPid":os.getpid(),"findPgid":os.getpgrp(),"signal":"TERM"}, separators=(",", ":")) + "\n")
+            signal.signal(signal.SIGTERM, ignored_term)
+            while True: time.sleep(1)
         time.sleep(2)
 os.execv("/usr/bin/find", ["find", *sys.argv[1:]])
 PY
@@ -315,6 +321,11 @@ run_scenario() {
         debug_stage=after-root-commit
     elif [[ "$scenario" == r7-executor-transition || "$scenario" == r7-executor-transition-double ]]; then
         fixture=local-boundary-debug
+    elif [[ "$scenario" == r8-increment || "$scenario" == r8-increment-double ]]; then
+        fixture=signal-root-after-receipt-before-ledger
+        [[ "$scenario" == *-double ]] && fixture+=-double
+    elif [[ "$scenario" == r8-resistant-find || "$scenario" == r8-resistant-find-double ]]; then
+        fixture=local-boundary-debug
     fi
     mkdir -p -m 700 "$scenario_dir"
     : > "$scenario_dir/fake-docker-argv.log"
@@ -397,7 +408,7 @@ PY
             [[ ! -s "$scenario_dir/fake-docker-mutations.log" ]] \
                 || fail "$scenario reached deletion mutation after an ownership failure"
         fi
-        if [[ "$scenario" == signal-* || "$scenario" == r6-* || "$scenario" == r7-* ]]; then
+        if [[ "$scenario" == signal-* || "$scenario" == r6-* || "$scenario" == r7-* || "$scenario" == r8-* ]]; then
             local expected_signals=1
             case "$scenario" in
                 *-double|signal-pre-bind|signal-pre-start|signal-cleanup) expected_signals=2 ;;
@@ -450,6 +461,24 @@ if commit.get("committed") is not True or commit.get("issuedActionCount") != 1 o
 PY
                 grep -Fq 'cleanup=interrupted-uncertain' "$scenario_dir/launcher/cleanup.md" \
                     || fail "$scenario did not report interrupted-uncertain"
+                ;;
+            r8-increment*|r8-resistant-find*)
+                python3 - "$scenario_dir/launcher/destructive-actions.jsonl" \
+                    "$scenario_dir/launcher/root-delete-commit.json" "$scenario_dir/launcher/cleanup.md" <<'PY'
+import json
+import pathlib
+import sys
+
+actions = [json.loads(line) for line in pathlib.Path(sys.argv[1]).read_text().splitlines() if line]
+commit = json.loads(pathlib.Path(sys.argv[2]).read_text())
+cleanup = pathlib.Path(sys.argv[3]).read_text()
+if len(actions) != 1 or actions[0].get("action") != "root-delete-committed-handoff":
+    raise SystemExit(f"committed receipt was not reconciled to one action: {actions!r}")
+if commit.get("sealed") is not True or commit.get("issuedActionCount") != 1:
+    raise SystemExit(f"sealed committed receipt mismatch: {commit!r}")
+if "cleanup=interrupted-uncertain" not in cleanup or "cleanup=passed" in cleanup:
+    raise SystemExit("post-commit terminal cleanup verdict is not truthful")
+PY
                 ;;
         esac
         if [[ "$scenario" == credential-escape ]]; then
@@ -511,6 +540,7 @@ def lines(path):
 executor = json.loads(executor_registry.read_text()) if executor_registry.exists() else {}
 executor_pid = executor.get("executorPid")
 executor_alive = False
+executor_pgid = None
 if isinstance(executor_pid, int):
     try:
         os.kill(executor_pid, 0)
@@ -518,6 +548,25 @@ if isinstance(executor_pid, int):
         pass
     else:
         executor_alive = True
+        try:
+            executor_pgid = os.getpgid(executor_pid)
+        except ProcessLookupError:
+            pass
+find_records = lines(output.parent / "fake-root-executor.jsonl")
+find_pid = next((item.get("findPid") for item in find_records if item.get("event") == "fake-find-transition"), None)
+find_alive = False
+find_pgid = None
+if isinstance(find_pid, int):
+    try:
+        os.kill(find_pid, 0)
+    except ProcessLookupError:
+        pass
+    else:
+        find_alive = True
+        try:
+            find_pgid = os.getpgid(find_pid)
+        except ProcessLookupError:
+            pass
 payload = {
     "cleanupPassed": "cleanup=passed" in cleanup.read_text(encoding="utf-8"),
     "credentialExists": credential.is_file(),
@@ -525,18 +574,26 @@ payload = {
     "destructiveActions": lines(actions),
     "dockerMutations": lines(mutations),
     "executorAlive": executor_alive,
+    "executorPgid": executor_pgid,
     "executorPid": executor_pid,
     "executorRegistry": executor,
     "executorState": json.loads(executor_state.read_text()) if executor_state.exists() else None,
     "commitReceipt": json.loads(commit.read_text()) if commit.exists() else None,
     "markerExists": (root / ".ink-color-qa-owned").is_file(),
+    "findAlive": find_alive,
+    "findPid": find_pid,
+    "findPgid": find_pgid,
+    "findRecords": find_records,
     "registryExists": registry.is_file(),
     "registryMode": f"{stat.S_IMODE(registry.stat().st_mode):03o}" if registry.exists() else None,
+    "residue": json.loads(residue.read_text()) if residue.exists() else None,
     "residueExists": residue.is_file(),
     "rootExists": root.is_dir(),
 }
 output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
+        [[ -s "$scenario_dir/retained-observation.json" ]] \
+            || fail "$scenario did not produce a retained-state observation"
         [[ ! -e "$launcher_root" ]] || find "$launcher_root" -depth -delete
     fi
 }
@@ -625,7 +682,17 @@ if [[ "$mode" == --r7-red ]]; then
     esac
 fi
 
-scenarios=(valid local-contract missing corrupt wrong-version unsealed stale polluted misleading-prose empty-query cross-project resource-replaced type-mismatch credential-escape hung deletion-failure interrupt-after-create-before-bind missing-network-intent signal-pre-bind signal-pre-start signal-cleanup signal-execute-single signal-execute-double signal-local-validation-entry signal-local-validation-entry-double signal-after-local-validation signal-after-local-validation-double signal-final-empty-plan signal-final-empty-plan-double signal-root-removal-entry signal-root-removal-entry-double signal-before-success-publication signal-before-success-publication-double signal-after-first-delete signal-after-first-delete-double r7-before-commit r7-before-commit-double r7-after-commit r7-after-commit-double r7-executor-transition r7-executor-transition-double)
+if [[ "$mode" == --r8-red ]]; then
+    case "$scenario_filter" in
+        r8-increment|r8-increment-double|r8-resistant-find|r8-resistant-find-double)
+            run_scenario "$scenario_filter"
+            fail "$scenario_filter unexpectedly satisfied the receipt-reconciliation and exact-executor containment contract"
+            ;;
+        *) fail "--r8-red requires an r8 counterexample scenario" ;;
+    esac
+fi
+
+scenarios=(valid local-contract missing corrupt wrong-version unsealed stale polluted misleading-prose empty-query cross-project resource-replaced type-mismatch credential-escape hung deletion-failure interrupt-after-create-before-bind missing-network-intent signal-pre-bind signal-pre-start signal-cleanup signal-execute-single signal-execute-double signal-local-validation-entry signal-local-validation-entry-double signal-after-local-validation signal-after-local-validation-double signal-final-empty-plan signal-final-empty-plan-double signal-root-removal-entry signal-root-removal-entry-double signal-before-success-publication signal-before-success-publication-double signal-after-first-delete signal-after-first-delete-double r7-before-commit r7-before-commit-double r7-after-commit r7-after-commit-double r7-executor-transition r7-executor-transition-double r8-increment r8-increment-double r8-resistant-find r8-resistant-find-double)
 if [[ -n "$scenario_filter" ]]; then
     run_scenario "$scenario_filter"
     exit 0
@@ -640,7 +707,7 @@ expected=[["container","rm","-f",a],["network","rm",b],["volume","rm","-f",proje
 def rows(path): return [json.loads(line) for line in path.read_text().splitlines() if line]
 valid=rows(root/"valid"/"fake-docker-mutations.log")
 if valid != expected: raise SystemExit(f"valid exact-identity mutation transcript mismatch: {valid!r}")
-adversarial=("missing","corrupt","wrong-version","unsealed","stale","polluted","misleading-prose","empty-query","cross-project","resource-replaced","type-mismatch","credential-escape","hung","interrupt-after-create-before-bind","missing-network-intent","signal-pre-bind","signal-pre-start","signal-cleanup","signal-execute-single","signal-execute-double","signal-local-validation-entry","signal-local-validation-entry-double","signal-after-local-validation","signal-after-local-validation-double","signal-final-empty-plan","signal-final-empty-plan-double","signal-root-removal-entry","signal-root-removal-entry-double","signal-before-success-publication","signal-before-success-publication-double")
+adversarial=("missing","corrupt","wrong-version","unsealed","stale","polluted","misleading-prose","empty-query","cross-project","resource-replaced","type-mismatch","credential-escape","hung","interrupt-after-create-before-bind","missing-network-intent","signal-pre-bind","signal-pre-start","signal-cleanup","signal-execute-single","signal-execute-double","signal-local-validation-entry","signal-local-validation-entry-double","signal-after-local-validation","signal-after-local-validation-double","signal-final-empty-plan","signal-final-empty-plan-double","signal-root-removal-entry","signal-root-removal-entry-double","signal-before-success-publication","signal-before-success-publication-double","r8-increment","r8-increment-double","r8-resistant-find","r8-resistant-find-double")
 for scenario in adversarial:
     mutations=rows(root/scenario/"fake-docker-mutations.log")
     if mutations: raise SystemExit(f"{scenario} reached mutation argv: {mutations!r}")
@@ -726,7 +793,22 @@ for scenario in r7_scenarios[2:]:
     commit = observation["commitReceipt"] or {}
     if len(actions) != 1 or actions[0].get("action") != "root-delete-committed-handoff" or commit.get("issuedActionCount") != 1 or commit.get("sealed") is not True or observation["executorAlive"]:
         raise SystemExit(f"post-commit executor contract failed for {scenario}: {observation!r}")
-(root/"assertions.json").write_text(json.dumps({"adversarialMutationCount":0,"atomicRegistrySourceToken":"os.replace","boundaryCaseCount":len(boundary_signal_scenarios),"boundarySignalAttemptCount":boundary_signal_attempts,"credentialEscapeMutationCount":len(rows(root/"credential-escape"/"fake-docker-mutations.log")),"credentialEscapeRealBindCount":sum(event.get("realBind") is not False for event in socket_events["credential-escape"]),"deletionFailureAttemptCount":len(deletion_failure),"deletionFailureFurtherMutationCount":max(0,len(deletion_failure)-1),"executeRevalidationDoubleMutationCount":len(rows(root/"signal-execute-double"/"fake-docker-mutations.log")),"executeRevalidationSingleMutationCount":len(rows(root/"signal-execute-single"/"fake-docker-mutations.log")),"fakeOnly":True,"lateDoubleDeletionCount":len(late_double),"lateDoubleFurtherDeletionCount":max(0,len(late_double)-1),"lateSingleDeletionCount":len(late_single),"lateSingleFurtherDeletionCount":max(0,len(late_single)-1),"localContractRealBindCount":sum(event.get("realBind") is not False for event in socket_events["local-contract"]),"missingNetworkIntentMutationCount":len(rows(root/"missing-network-intent"/"fake-docker-mutations.log")),"portRegistrySealedAtValidation":port_report.get("registrySealed"),"preMutationRegistryMode":"600","preMutationRegistrySealed":False,"r7CommittedExecutorCaseCount":len(r7_scenarios),"r7CommittedExecutorSignalCount":sum(len(rows(root/scenario/"fake-signal.log")) for scenario in r7_scenarios),"preMutationRegistrySealed":False,"recoveryReceiptMode":"600","recoveryReceiptSealed":True,"rootBeforeCallActionCount":len(root_signal_actions["signal-root-removal-entry"]),"rootBeforeFindActionCount":len(root_signal_actions["signal-root-removal-entry-double"]),"schemaVersion":2,"signalAttemptCount":signal_attempts,"socketInterceptCount":sum(map(len, socket_events.values())),"testedScenarioCount":len([path for path in root.iterdir() if path.is_dir() and (path/"launcher.exit-code").exists()]),"validExactMutationCount":len(valid),"validRootRemovalActionCount":sum(action.get("action") == "root-delete-committed-handoff" for action in valid_actions)},indent=2,sort_keys=True)+"\n")
+r8_scenarios = ("r8-increment", "r8-increment-double", "r8-resistant-find", "r8-resistant-find-double")
+r8 = {scenario: json.loads((root/scenario/"retained-observation.json").read_text()) for scenario in r8_scenarios}
+for scenario, observation in r8.items():
+    actions = observation["destructiveActions"]
+    commit = observation["commitReceipt"] or {}
+    if len(actions) != 1 or actions[0].get("action") != "root-delete-committed-handoff" or commit.get("issuedActionCount") != 1 or commit.get("sealed") is not True:
+        raise SystemExit(f"sealed receipt/action ledger mismatch for {scenario}: {observation!r}")
+    if observation["executorAlive"] or observation["findAlive"] or observation["cleanupPassed"]:
+        raise SystemExit(f"terminal containment or cleanup verdict failed for {scenario}: {observation!r}")
+    if observation.get("residue", {}).get("rootState") != "retained" or not all(observation[key] for key in ("rootExists", "markerExists", "credentialExists", "registryExists", "residueExists")):
+        raise SystemExit(f"post-commit root state is not truthfully retained for {scenario}: {observation!r}")
+for scenario in ("r8-resistant-find", "r8-resistant-find-double"):
+    records = r8[scenario]["findRecords"]
+    if not any(item.get("event") == "fake-find-ignored-term" for item in records):
+        raise SystemExit(f"TERM-resistant find was not exercised for {scenario}: {records!r}")
+(root/"assertions.json").write_text(json.dumps({"adversarialMutationCount":0,"atomicRegistrySourceToken":"os.replace","boundaryCaseCount":len(boundary_signal_scenarios),"boundarySignalAttemptCount":boundary_signal_attempts,"credentialEscapeMutationCount":len(rows(root/"credential-escape"/"fake-docker-mutations.log")),"credentialEscapeRealBindCount":sum(event.get("realBind") is not False for event in socket_events["credential-escape"]),"deletionFailureAttemptCount":len(deletion_failure),"deletionFailureFurtherMutationCount":max(0,len(deletion_failure)-1),"executeRevalidationDoubleMutationCount":len(rows(root/"signal-execute-double"/"fake-docker-mutations.log")),"executeRevalidationSingleMutationCount":len(rows(root/"signal-execute-single"/"fake-docker-mutations.log")),"fakeOnly":True,"lateDoubleDeletionCount":len(late_double),"lateDoubleFurtherDeletionCount":max(0,len(late_double)-1),"lateSingleDeletionCount":len(late_single),"lateSingleFurtherDeletionCount":max(0,len(late_single)-1),"localContractRealBindCount":sum(event.get("realBind") is not False for event in socket_events["local-contract"]),"missingNetworkIntentMutationCount":len(rows(root/"missing-network-intent"/"fake-docker-mutations.log")),"portRegistrySealedAtValidation":port_report.get("registrySealed"),"preMutationRegistryMode":"600","preMutationRegistrySealed":False,"r7CommittedExecutorCaseCount":len(r7_scenarios),"r7CommittedExecutorSignalCount":sum(len(rows(root/scenario/"fake-signal.log")) for scenario in r7_scenarios),"r8CommittedReceiptCaseCount":len(r8_scenarios),"r8ResistantFindCaseCount":2,"recoveryReceiptMode":"600","recoveryReceiptSealed":True,"rootBeforeCallActionCount":len(root_signal_actions["signal-root-removal-entry"]),"rootBeforeFindActionCount":len(root_signal_actions["signal-root-removal-entry-double"]),"schemaVersion":2,"signalAttemptCount":signal_attempts,"socketInterceptCount":sum(map(len, socket_events.values())),"testedScenarioCount":len([path for path in root.iterdir() if path.is_dir() and (path/"launcher.exit-code").exists()]),"validExactMutationCount":len(valid),"validRootRemovalActionCount":sum(action.get("action") == "root-delete-committed-handoff" for action in valid_actions)},indent=2,sort_keys=True)+"\n")
 PY
 
 grep -Fq 'os.replace(temporary, registry)' "$root/scripts/fixtures/run-ink-color-qa.sh" || fail "atomic registry replacement implementation is missing"
