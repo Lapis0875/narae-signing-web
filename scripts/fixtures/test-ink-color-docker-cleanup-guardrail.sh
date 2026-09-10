@@ -5,6 +5,8 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 mode=""
 evidence_dir=""
 fake_root=""
+recovery_root=""
+quiescence_probe_pid=""
 scenario_filter="${INK_QA_GUARDRAIL_SCENARIO:-}"
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
@@ -12,18 +14,20 @@ cleanup() {
     local incoming=$?
     trap - EXIT HUP INT TERM
     if [[ -n "$fake_root" && -d "$fake_root" ]]; then find "$fake_root" -depth -delete; fi
+    if [[ -n "$recovery_root" && -d "$recovery_root" ]]; then find "$recovery_root" -depth -delete; fi
+    if [[ -n "$quiescence_probe_pid" ]]; then kill "$quiescence_probe_pid" 2>/dev/null || true; wait "$quiescence_probe_pid" 2>/dev/null || true; fi
     exit "$incoming"
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --red|--r2-red|--r4-red|--r5-red|--r6-red|--r7-red|--r8-red|--r9-red|--green) [[ -z "$mode" ]] || fail "choose exactly one mode"; mode=$1; shift ;;
+        --red|--r2-red|--r4-red|--r5-red|--r6-red|--r7-red|--r8-red|--r9-red|--recovery-registration-red|--recovery-registration-tests|--recovery-registration-demo|--green) [[ -z "$mode" ]] || fail "choose exactly one mode"; mode=$1; shift ;;
         --evidence-dir) [[ $# -ge 2 ]] || fail "--evidence-dir requires a path"; evidence_dir=$2; shift 2 ;;
         *) fail "unknown argument: $1" ;;
     esac
 done
-[[ "$mode" == --red || "$mode" == --r2-red || "$mode" == --r4-red || "$mode" == --r5-red || "$mode" == --r6-red || "$mode" == --r7-red || "$mode" == --r8-red || "$mode" == --r9-red || "$mode" == --green ]] \
-    || fail "--red, --r2-red, --r4-red, --r5-red, --r6-red, --r7-red, --r8-red, --r9-red, or --green is required"
+[[ "$mode" == --red || "$mode" == --r2-red || "$mode" == --r4-red || "$mode" == --r5-red || "$mode" == --r6-red || "$mode" == --r7-red || "$mode" == --r8-red || "$mode" == --r9-red || "$mode" == --recovery-registration-red || "$mode" == --recovery-registration-tests || "$mode" == --recovery-registration-demo || "$mode" == --green ]] \
+    || fail "a supported test mode is required"
 [[ -n "$evidence_dir" ]] || fail "--evidence-dir is required"
 evidence_dir=$(mkdir -p "$evidence_dir" && CDPATH= cd -- "$evidence_dir" && pwd)
 fake_root=$(mktemp -d "${TMPDIR:-/tmp}/ink-color-cleanup-guardrail.XXXXXX")
@@ -110,6 +114,9 @@ if argv and argv[0] == "compose":
         with spawn_log.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(argv, separators=(",", ":")) + "\n")
         if "build" in argv:
+            if scenario == "recovery-build-failure":
+                save()
+                raise SystemExit(42)
             state["created"] = sorted(set([*state.get("created", []), "image"]))
         elif "create" in argv:
             state["created"] = sorted(set([*state.get("created", []), "container", "network", "volume"]))
@@ -134,6 +141,12 @@ if argv and argv[0] == "compose":
     print("PASS cleanup Task 8 synthetic-success-prose cafe1234 similar-project"); raise SystemExit
 if len(argv) >= 2 and argv[1] == "ls":
     kind = argv[0]
+    if scenario == "recovery-query-error" and kind == "container": raise SystemExit(70)
+    if scenario == "recovery-query-hung" and kind == "container": time.sleep(60)
+    if scenario == "recovery-metadata-race" and kind == "container":
+        pathlib.Path(os.environ["FAKE_RECOVERY_RACE_FILE"]).chmod(0o644)
+    if scenario == "recovery-candidate" and kind == "container":
+        print("a" * 64); raise SystemExit
     cleanup_phase = state.get("started", False) and not pathlib.Path(state.get("compose", ".")).exists()
     if cleanup_phase and kind == "container":
         state["cleanupValidationPass"] = state.get("cleanupValidationPass", 0) + 1
@@ -629,7 +642,11 @@ output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding
 PY
         [[ -s "$scenario_dir/retained-observation.json" ]] \
             || fail "$scenario did not produce a retained-state observation"
-        [[ ! -e "$launcher_root" ]] || find "$launcher_root" -depth -delete
+        if [[ "$scenario" == recovery-build-failure ]]; then
+            recovery_root=$launcher_root
+        else
+            [[ ! -e "$launcher_root" ]] || find "$launcher_root" -depth -delete
+        fi
     fi
 }
 
@@ -735,6 +752,265 @@ if [[ "$mode" == --r9-red ]]; then
             ;;
         *) fail "--r9-red requires an r9 post-wait counterexample scenario" ;;
     esac
+fi
+
+if [[ "$mode" == --recovery-registration-red ]]; then
+    run_scenario recovery-build-failure
+    scenario_dir="$evidence_dir/recovery-build-failure"
+    registry="$scenario_dir/launcher/ownership-registry.json"
+    record="$recovery_root/.ink-color-recovery-registration.json"
+    [[ "$(cat "$scenario_dir/launcher.exit-code")" == 42 ]] || fail "pre-bind build status was not preserved"
+    [[ -d "$recovery_root" ]] || fail "normal cleanup did not retain the unsealed synthetic root"
+    [[ ! -s "$scenario_dir/fake-docker-mutations.log" ]] || fail "pre-bind failure reached Docker mutation"
+    python3 - "$registry" <<'PY'
+import json, pathlib, sys
+value = json.loads(pathlib.Path(sys.argv[1]).read_text())
+if value.get("sealed") is not False or value.get("resources") != []:
+    raise SystemExit("normal partial-startup registry did not remain unchanged and unsealed")
+if len([item for item in value["intents"] if item.get("scope") == "docker"]) != 3:
+    raise SystemExit("synthetic Docker intents were not preserved")
+PY
+    [[ -s "$record" ]] || fail "no sealed registration-only recovery record exists after partial startup"
+    fail "current launcher has no valid registration-only recovery path"
+fi
+
+if [[ "$mode" == --recovery-registration-tests || "$mode" == --recovery-registration-demo ]]; then
+    run_scenario recovery-build-failure
+    scenario_dir="$evidence_dir/recovery-build-failure"
+    original_registry="$scenario_dir/launcher/ownership-registry.json"
+    original_digest=$(shasum -a 256 "$original_registry" | awk '{print $1}')
+    mutation_log="$scenario_dir/fake-docker-mutations.log"
+
+    invoke_recovery() {
+        local label=$1 source=$2 scenario=$3 interrupt=${4:-} selected_root=${5:-$recovery_root} expected=${6:-} profile=${7:-synthetic-test} source_revision=${8:-} output_dir rc=0
+        output_dir=$(dirname "$source")
+        [[ -n "$expected" ]] || expected=$(shasum -a 256 "$source" | awk '{print $1}')
+        [[ -n "$source_revision" ]] || source_revision=$(git -C "$root" rev-parse HEAD)
+        PATH="$fake_root/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+        DOCKER_HOST="unix://$fake_root/host-docker-must-not-exist.sock" \
+        FAKE_DOCKER_SCENARIO="$scenario" FAKE_DOCKER_STATE="$fake_root/state" \
+        FAKE_RECOVERY_RACE_FILE="$recovery_root/compose.yml" \
+        FAKE_DOCKER_ARGV_LOG="$scenario_dir/fake-docker-argv.log" \
+        FAKE_DOCKER_MUTATION_LOG="$mutation_log" \
+        FAKE_DOCKER_SPAWN_LOG="$scenario_dir/fake-docker-spawns.log" \
+        FAKE_SIGNAL_LOG="$scenario_dir/fake-signal.log" \
+        INK_QA_RECOVERY_INTERRUPT_STAGE="$interrupt" \
+        INK_QA_RECOVERY_SYNTHETIC_TEST=1 \
+            bash "$root/scripts/fixtures/run-ink-color-qa.sh" --recovery-registration \
+            --recovery-root "$selected_root" --source-registry "$source" \
+            --expected-registry-sha256 "$expected" \
+            --source-revision "$source_revision" \
+            --recovery-profile "$profile" \
+            --evidence-dir "$output_dir" > "$evidence_dir/$label.stdout" 2> "$evidence_dir/$label.stderr" || rc=$?
+        printf '%s\n' "$rc" > "$evidence_dir/$label.exit-code"
+        return "$rc"
+    }
+
+    happy_dir="$evidence_dir/happy"
+    mkdir -p -m 700 "$happy_dir"
+    happy_registry="$happy_dir/ownership-registry.json"
+    cp "$original_registry" "$happy_registry"
+    chmod 600 "$happy_registry"
+    compose_spawn_count_before=$(wc -l < "$scenario_dir/fake-docker-spawns.log" | tr -d ' ')
+    invoke_recovery happy "$happy_registry" recovery-build-failure
+    record="$happy_dir/recovery-registration.json"
+    [[ -s "$record" && "$(stat -f '%Lp' "$record" 2>/dev/null || stat -c '%a' "$record")" == 600 ]] \
+        || fail "happy recovery did not publish a private record"
+    [[ "$(shasum -a 256 "$original_registry" | awk '{print $1}')" == "$original_digest" ]] \
+        || fail "happy recovery changed the original registry"
+    [[ -d "$recovery_root" && ! -s "$mutation_log" ]] \
+        || fail "happy recovery performed a destructive action"
+    [[ "$(wc -l < "$scenario_dir/fake-docker-spawns.log" | tr -d ' ')" == "$compose_spawn_count_before" ]] \
+        || fail "recovery mode reached a Compose create/build/up path"
+    [[ ! -e "$happy_dir/cleanup.md" && ! -e "$happy_dir/resources.md" && ! -e "$happy_dir/owned-residue.json" ]] \
+        || fail "recovery mode reached create_run or EXIT cleanup"
+    python3 - "$happy_registry" "$record" "$recovery_root" "$evidence_dir/recovery-record-parser.json" <<'PY'
+import json, pathlib, stat, sys
+source_path, record_path, root_path, output_path = map(pathlib.Path, sys.argv[1:])
+source = json.loads(source_path.read_text())
+record = json.loads(record_path.read_text())
+required = {"schemaVersion","recordType","scope","profile","sealed","recordId","sourceRevision","implementationRevision","sourceRegistry","owner","originalIntents","unfulfilledDockerIntents","root","quiescence","dockerObservation","actions","registeredAtEpoch"}
+if set(record) != required or record["schemaVersion"] != 1 or record["recordType"] != "ink-color-recovery-registration" or record["scope"] != "registration-only" or record["profile"] != "synthetic-test" or record["sealed"] is not True:
+    raise SystemExit("recovery record schema/seal mismatch")
+if record["originalIntents"] != source["intents"] or record["unfulfilledDockerIntents"] != [item for item in source["intents"] if item["scope"] == "docker"]:
+    raise SystemExit("recovery record did not preserve original/unfulfilled intents")
+if record["root"]["path"] != str(root_path) or record["root"]["markerMatchesOwner"] is not True:
+    raise SystemExit("recovery record root binding mismatch")
+if record["dockerObservation"]["candidateCount"] != 0 or record["actions"] != {"dockerMutationCount":0,"rootMutationCount":0}:
+    raise SystemExit("recovery record claimed an unsafe Docker/action state")
+summary = {
+    "mode": f"{stat.S_IMODE(record_path.stat().st_mode):03o}",
+    "originalIntentCount": len(record["originalIntents"]),
+    "unfulfilledDockerIntentCount": len(record["unfulfilledDockerIntents"]),
+    "candidateCount": record["dockerObservation"]["candidateCount"],
+    "sealed": record["sealed"],
+    "scope": record["scope"],
+    "rootStillExists": root_path.is_dir(),
+}
+output_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+PY
+
+    set +e
+    invoke_recovery duplicate "$happy_registry" recovery-build-failure
+    duplicate_rc=$?
+    set -e
+    [[ $duplicate_rc -ne 0 ]] || fail "duplicate recovery registration overwrote the record"
+
+    after_publish_dir="$evidence_dir/interruption-after-publish"
+    mkdir -p -m 700 "$after_publish_dir"
+    after_publish_registry="$after_publish_dir/ownership-registry.json"
+    cp "$original_registry" "$after_publish_registry"
+    chmod 600 "$after_publish_registry"
+    set +e
+    invoke_recovery interruption-after-publish "$after_publish_registry" recovery-build-failure after-publish
+    after_publish_rc=$?
+    set -e
+    [[ $after_publish_rc -ne 0 && -s "$after_publish_dir/recovery-registration.json" ]] \
+        || fail "post-publish interruption did not leave one durable atomic record"
+    python3 - "$after_publish_dir/recovery-registration.json" <<'PY'
+import json, pathlib, stat, sys
+path = pathlib.Path(sys.argv[1]); value = json.loads(path.read_text())
+if value.get("sealed") is not True or value.get("scope") != "registration-only" or stat.S_IMODE(path.stat().st_mode) != 0o600:
+    raise SystemExit("post-publish interruption left a partial or consumable-invalid record")
+PY
+
+    refusal_cases=(candidate query-error query-hung interruption interruption-repeat malformed stale-digest duplicate-intent live-launcher identity-carrier marker-mismatch unsafe-mode registry-mode descendant-symlink unsafe-type metadata-race wrong-path historical-profile)
+    : > "$evidence_dir/refusal-matrix.tsv"
+    for refusal in "${refusal_cases[@]}"; do
+        refusal_dir="$evidence_dir/refusal-$refusal"
+        mkdir -p -m 700 "$refusal_dir"
+        refusal_registry="$refusal_dir/ownership-registry.json"
+        cp "$original_registry" "$refusal_registry"
+        chmod 600 "$refusal_registry"
+        fake_scenario=recovery-build-failure
+        interrupt=""
+        restore_marker=false
+        restore_mode=false
+        cleanup_descendant=""
+        selected_profile=synthetic-test
+        selected_revision=""
+        case "$refusal" in
+            candidate) fake_scenario=recovery-candidate ;;
+            query-error) fake_scenario=recovery-query-error ;;
+            query-hung) fake_scenario=recovery-query-hung ;;
+            interruption|interruption-repeat) interrupt=before-publish ;;
+            malformed) printf '{malformed\n' > "$refusal_registry" ;;
+            stale-digest)
+                printf '\n' >> "$refusal_registry"
+                ;;
+            duplicate-intent)
+                python3 - "$refusal_registry" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1]); value = json.loads(path.read_text()); value["intents"].append(value["intents"][0]); path.write_text(json.dumps(value, separators=(",", ":")) + "\n")
+PY
+                ;;
+            live-launcher)
+                python3 - "$refusal_registry" "$$" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1]); value = json.loads(path.read_text())
+for item in value["intents"]:
+    if item.get("scope") == "local" and item.get("kind") == "launcher-pid": item["identity"] = sys.argv[2]
+path.write_text(json.dumps(value, separators=(",", ":")) + "\n")
+PY
+                ;;
+            identity-carrier)
+                /usr/bin/python3 -c 'import time; time.sleep(30)' "$recovery_root" &
+                quiescence_probe_pid=$!
+                identity_ready=false
+                for _ in $(seq 1 100); do
+                    if ps -p "$quiescence_probe_pid" -o command= | grep -Fq -- "$recovery_root"; then
+                        identity_ready=true
+                        break
+                    fi
+                    sleep 0.01
+                done
+                [[ "$identity_ready" == true ]] || fail "identity carrier did not become observable"
+                ;;
+            marker-mismatch)
+                printf '%s\n' '$(touch recovery-prompt-injection-must-not-run)' > "$recovery_root/.ink-color-qa-owned"
+                restore_marker=true
+                ;;
+            unsafe-mode)
+                chmod 755 "$recovery_root"
+                restore_mode=true
+                ;;
+            registry-mode) chmod 644 "$refusal_registry" ;;
+            descendant-symlink)
+                ln -s /tmp "$recovery_root/recovery-escape-link"
+                cleanup_descendant="$recovery_root/recovery-escape-link"
+                ;;
+            unsafe-type)
+                mkfifo "$recovery_root/recovery-unsafe-fifo"
+                cleanup_descendant="$recovery_root/recovery-unsafe-fifo"
+                ;;
+            metadata-race)
+                fake_scenario=recovery-metadata-race
+                ;;
+            wrong-path) ;;
+            historical-profile)
+                selected_profile=historical-r2
+                selected_revision=301ccd02889e016ee5523aa2ce65eb42a0bd653b
+                ;;
+        esac
+        set +e
+        if [[ "$refusal" == wrong-path ]]; then
+            invoke_recovery "$refusal" "$refusal_registry" "$fake_scenario" "" "/tmp/not-owned"
+            refusal_rc=$?
+        elif [[ "$refusal" == stale-digest ]]; then
+            invoke_recovery "$refusal" "$refusal_registry" "$fake_scenario" "" "$recovery_root" "$original_digest"
+            refusal_rc=$?
+        else
+            invoke_recovery "$refusal" "$refusal_registry" "$fake_scenario" "$interrupt" "$recovery_root" "" "$selected_profile" "$selected_revision"
+            refusal_rc=$?
+        fi
+        set -e
+        if [[ "$restore_marker" == true ]]; then
+            python3 - "$original_registry" "$recovery_root/.ink-color-qa-owned" <<'PY'
+import json, pathlib, sys
+pathlib.Path(sys.argv[2]).write_text(json.loads(pathlib.Path(sys.argv[1]).read_text())["runId"] + "\n")
+PY
+            chmod 600 "$recovery_root/.ink-color-qa-owned"
+        fi
+        if [[ "$refusal" == marker-mismatch && -e recovery-prompt-injection-must-not-run ]]; then
+            fail "marker data was executed as a command"
+        fi
+        if [[ "$refusal" == identity-carrier ]]; then
+            kill "$quiescence_probe_pid" 2>/dev/null || true
+            wait "$quiescence_probe_pid" 2>/dev/null || true
+            quiescence_probe_pid=""
+        fi
+        [[ "$restore_mode" == false ]] || chmod 700 "$recovery_root"
+        if [[ -n "$cleanup_descendant" && -e "$cleanup_descendant" || -L "$cleanup_descendant" ]]; then
+            find "$cleanup_descendant" -delete
+        fi
+        if [[ "$refusal" == metadata-race ]]; then chmod 600 "$recovery_root/compose.yml"; fi
+        [[ $refusal_rc -ne 0 && ! -e "$refusal_dir/recovery-registration.json" ]] \
+            || fail "$refusal published a recovery record"
+        [[ -d "$recovery_root" && ! -s "$mutation_log" ]] || fail "$refusal performed a destructive action"
+        printf '%s\tREFUSED\tno-action\n' "$refusal" >> "$evidence_dir/refusal-matrix.tsv"
+    done
+
+    missing_output="$evidence_dir/recovery-output-must-not-be-created"
+    [[ ! -e "$missing_output" ]] || fail "unsafe output fixture unexpectedly exists"
+    set +e
+    INK_QA_RECOVERY_SYNTHETIC_TEST=1 bash "$root/scripts/fixtures/run-ink-color-qa.sh" --recovery-registration \
+        --recovery-root "$recovery_root" --source-registry "$happy_registry" \
+        --expected-registry-sha256 "$(shasum -a 256 "$happy_registry" | awk '{print $1}')" \
+        --source-revision "$(git -C "$root" rev-parse HEAD)" --recovery-profile synthetic-test \
+        --evidence-dir "$missing_output" > "$evidence_dir/unsafe-output.stdout" 2> "$evidence_dir/unsafe-output.stderr"
+    unsafe_output_rc=$?
+    set -e
+    [[ $unsafe_output_rc -ne 0 && ! -e "$missing_output" ]] || fail "invalid recovery output parent was created"
+    printf 'unsafe-output-parent\tREFUSED\tno-directory-created\n' >> "$evidence_dir/refusal-matrix.tsv"
+
+    [[ "$(shasum -a 256 "$original_registry" | awk '{print $1}')" == "$original_digest" ]] \
+        || fail "refusal matrix changed the original registry"
+    if [[ "$mode" == --recovery-registration-demo ]]; then
+        printf 'PASS: recovery registration demo; sealed registration-only record; original unchanged; candidate refused; no action\n'
+    else
+        printf 'PASS: recovery registration and 19 refusal cases; original unchanged; no action\n'
+    fi
+    exit 0
 fi
 
 scenarios=(valid local-contract missing corrupt wrong-version unsealed stale polluted misleading-prose empty-query cross-project resource-replaced type-mismatch credential-escape hung deletion-failure interrupt-after-create-before-bind missing-network-intent signal-pre-bind signal-pre-start signal-cleanup signal-execute-single signal-execute-double signal-local-validation-entry signal-local-validation-entry-double signal-after-local-validation signal-after-local-validation-double signal-final-empty-plan signal-final-empty-plan-double signal-root-removal-entry signal-root-removal-entry-double signal-before-success-publication signal-before-success-publication-double signal-after-first-delete signal-after-first-delete-double r7-before-commit r7-before-commit-double r7-after-commit r7-after-commit-double r7-executor-transition r7-executor-transition-double r8-increment r8-increment-double r8-resistant-find r8-resistant-find-double r9-post-wait r9-post-wait-double)

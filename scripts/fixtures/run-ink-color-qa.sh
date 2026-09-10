@@ -28,10 +28,302 @@ root_commit_receipt=""
 root_delete_request=""
 root_executor_state=""
 schema_failures=0
+recovery_root=""
+recovery_source_registry=""
+recovery_expected_digest=""
+recovery_source_revision=""
+recovery_profile=""
 
 fail() {
     printf 'FAIL: %s\n' "$*" >&2
     exit 1
+}
+
+register_recovery_only() {
+    umask 077
+    python3 - "$root" "$recovery_root" "$recovery_source_registry" \
+        "$recovery_expected_digest" "$recovery_source_revision" "$recovery_profile" "$evidence_dir/recovery-registration.json" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+
+worktree, root_arg, registry_arg, expected_digest, source_revision, profile, record_arg = sys.argv[1:]
+worktree = pathlib.Path(worktree)
+root = pathlib.Path(root_arg)
+registry = pathlib.Path(registry_arg)
+record = pathlib.Path(record_arg)
+uid = os.getuid()
+historical = {
+    "root": "/private/tmp/narae-ink-color-qa.7338ba83ee9e2d65",
+    "sourceRevision": "301ccd02889e016ee5523aa2ce65eb42a0bd653b",
+    "registryDigest": "fa603bb6dfe33a58a6216712e36dcf7f66f1b1d1f016a1629a1ee733aed3d5a6",
+    "rootDevice": 16777232,
+    "rootInode": 91905431,
+    "rootBirthtimeMs": 1789062489304,
+    "rootMtimeMs": 1789062489891,
+    "markerDevice": 16777232,
+    "markerInode": 91905432,
+    "markerBirthtimeMs": 1789062489305,
+    "markerMtimeMs": 1789062489305,
+    "registryDevice": 16777232,
+    "registryInode": 91905473,
+    "parentDevice": 16777232,
+    "parentInode": 53537484,
+}
+
+if not re.fullmatch(r"/(?:private/)?tmp/narae-ink-color-qa\.[0-9a-f]{16}", root_arg):
+    raise SystemExit("recovery root is outside the exact task namespace")
+if root_arg != str(root.absolute()) or ".." in root.parts:
+    raise SystemExit("recovery root is not one explicit absolute literal path")
+if registry_arg != str(registry.absolute()) or registry.name != "ownership-registry.json":
+    raise SystemExit("source registry must be one explicit ownership-registry path")
+if registry.parent.resolve(strict=True) != registry.parent:
+    raise SystemExit("source registry ancestry contains a path alias or symlink")
+if not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
+    raise SystemExit("expected source registry digest is invalid")
+if not re.fullmatch(r"[0-9a-f]{40}", source_revision):
+    raise SystemExit("source evidence revision is invalid")
+current_head = subprocess.run(
+    ["git", "-C", str(worktree), "rev-parse", "HEAD"], check=True, capture_output=True, text=True, timeout=10
+).stdout.strip()
+if profile == "historical-r2":
+    if root_arg != historical["root"] or source_revision != historical["sourceRevision"] or expected_digest != historical["registryDigest"]:
+        raise SystemExit("historical r2 recovery provenance does not match the fixed identity")
+elif profile == "synthetic-test":
+    docker_host = os.environ.get("DOCKER_HOST", "")
+    if os.environ.get("INK_QA_RECOVERY_SYNTHETIC_TEST") != "1" or not docker_host.endswith("/host-docker-must-not-exist.sock") or pathlib.Path(docker_host.removeprefix("unix://")).exists():
+        raise SystemExit("synthetic recovery profile requires the isolated nonexistent fake-engine boundary")
+    if source_revision != current_head or root_arg == historical["root"]:
+        raise SystemExit("synthetic recovery provenance is stale or targets the historical root")
+else:
+    raise SystemExit("recovery profile is invalid")
+
+record_parent_info = record.parent.lstat()
+if record.parent.is_symlink() or not stat.S_ISDIR(record_parent_info.st_mode) or record_parent_info.st_uid != uid or stat.S_IMODE(record_parent_info.st_mode) != 0o700:
+    raise SystemExit("recovery output parent is not an owned existing directory")
+try:
+    record.parent.resolve(strict=True).relative_to(root.resolve(strict=True))
+except ValueError:
+    pass
+else:
+    raise SystemExit("recovery output parent must remain outside the retained root")
+
+def open_regular(path, mode):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != mode or info.st_uid != uid:
+        os.close(fd)
+        raise ValueError(f"{path.name} is not an owned private regular file")
+    return fd, info
+
+def stable_identity(info):
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+registry_fd, registry_info = open_regular(registry, 0o600)
+root_fd = -1
+marker_fd = -1
+temporary = None
+try:
+    source_bytes = os.read(registry_fd, 1024 * 1024 + 1)
+    if len(source_bytes) > 1024 * 1024 or hashlib.sha256(source_bytes).hexdigest() != expected_digest:
+        raise ValueError("source registry digest changed")
+    source = json.loads(source_bytes)
+    required = {"schemaVersion", "runId", "project", "ownerLabel", "createdAtEpoch", "sealed", "intents", "resources"}
+    if not isinstance(source, dict) or set(source) != required or source["schemaVersion"] != 2:
+        raise ValueError("source registry schema is invalid")
+    run_id = source["runId"]
+    project = source["project"]
+    if not re.fullmatch(r"[0-9a-f]{64}", run_id) or not isinstance(project, str) or not re.fullmatch(r"ink-color-qa-[0-9a-f]{12}", project):
+        raise ValueError("source owner identity is invalid")
+    if source["ownerLabel"] != {"key": "com.naraemedia.qa.owner", "value": run_id}:
+        raise ValueError("source owner label is invalid")
+    if source["sealed"] is not False or source["resources"] != []:
+        raise ValueError("source registry is not the unchanged partial-startup state")
+    if not isinstance(source["createdAtEpoch"], int) or source["createdAtEpoch"] > int(time.time()) + 5:
+        raise ValueError("source registry time is invalid")
+    intents = source["intents"]
+    if not isinstance(intents, list):
+        raise ValueError("source intents are invalid")
+    keys = []
+    for intent in intents:
+        if not isinstance(intent, dict) or set(intent) != {"scope", "kind", "identity"}:
+            raise ValueError("source intent schema is invalid")
+        key = (intent["scope"], intent["kind"], intent["identity"])
+        if intent["scope"] not in {"local", "docker"} or not all(isinstance(value, str) and value for value in key):
+            raise ValueError("source intent value is invalid")
+        keys.append(key)
+    if len(keys) != len(set(keys)) or keys.count(("local", "temporary-root", root_arg)) != 1:
+        raise ValueError("source intents do not name one exact recovery root")
+    launcher_pids = [identity for scope, kind, identity in keys if scope == "local" and kind == "launcher-pid"]
+    if len(launcher_pids) != 1 or not launcher_pids[0].isdigit():
+        raise ValueError("source launcher identity is invalid")
+
+    def assert_quiescent():
+        try:
+            os.kill(int(launcher_pids[0]), 0)
+        except ProcessLookupError:
+            pass
+        except PermissionError as error:
+            raise ValueError("source launcher quiescence cannot be proven") from error
+        else:
+            raise ValueError("source launcher is not quiescent")
+        rows = subprocess.run(
+            ["ps", "-axo", "pid=,ppid=,command="], check=True, capture_output=True, text=True, timeout=10
+        ).stdout.splitlines()
+        parsed = {}
+        for row in rows:
+            match = re.match(r"\s*(\d+)\s+(\d+)\s+(.*)", row)
+            if match:
+                parsed[int(match.group(1))] = (int(match.group(2)), match.group(3))
+        ancestors = set()
+        candidate = os.getpid()
+        while candidate and candidate not in ancestors:
+            ancestors.add(candidate)
+            candidate = parsed.get(candidate, (0, ""))[0]
+        tokens = (root_arg, run_id, project)
+        if any(pid not in ancestors and any(token in command for token in tokens) for pid, (_, command) in parsed.items()):
+            raise ValueError("another process still carries the recovery identity")
+
+    assert_quiescent()
+
+    parent = root.parent
+    parent_info = parent.lstat()
+    if parent.is_symlink() or not stat.S_ISDIR(parent_info.st_mode) or str(parent) not in {"/private/tmp", "/tmp"}:
+        raise ValueError("recovery parent identity is invalid")
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    root_info = os.fstat(root_fd)
+    if not stat.S_ISDIR(root_info.st_mode) or stat.S_IMODE(root_info.st_mode) != 0o700 or root_info.st_uid != uid or root_info.st_dev != parent_info.st_dev:
+        raise ValueError("recovery root metadata is invalid")
+    marker_fd = os.open(".ink-color-qa-owned", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root_fd)
+    marker_info = os.fstat(marker_fd)
+    marker_bytes = os.read(marker_fd, 129)
+    if not stat.S_ISREG(marker_info.st_mode) or stat.S_IMODE(marker_info.st_mode) != 0o600 or marker_info.st_uid != uid:
+        raise ValueError("recovery marker metadata is invalid")
+    if marker_bytes != (run_id + "\n").encode() or len(marker_bytes) > 65:
+        raise ValueError("recovery marker does not match the source owner")
+    if profile == "historical-r2" and (
+        root_info.st_dev != historical["rootDevice"] or root_info.st_ino != historical["rootInode"]
+        or int(root_info.st_birthtime * 1000) != historical["rootBirthtimeMs"] or int(root_info.st_mtime * 1000) != historical["rootMtimeMs"]
+        or marker_info.st_dev != historical["markerDevice"] or marker_info.st_ino != historical["markerInode"]
+        or int(marker_info.st_birthtime * 1000) != historical["markerBirthtimeMs"] or int(marker_info.st_mtime * 1000) != historical["markerMtimeMs"]
+        or registry_info.st_dev != historical["registryDevice"] or registry_info.st_ino != historical["registryInode"]
+        or parent_info.st_dev != historical["parentDevice"] or parent_info.st_ino != historical["parentInode"]
+        or stat.S_IMODE(parent_info.st_mode) != 0o1777 or parent_info.st_uid != 0 or parent_info.st_gid != 0
+        or root_info.st_gid != 0 or marker_info.st_gid != 0 or registry_info.st_gid != 20
+    ):
+        raise ValueError("historical r2 immutable identity changed")
+
+    def scan_subtree():
+        snapshot = []
+        for directory, names, files in os.walk(root, topdown=True, followlinks=False):
+            directory_path = pathlib.Path(directory)
+            for name in sorted([*names, *files]):
+                path = directory_path / name
+                info = path.lstat()
+                if stat.S_ISLNK(info.st_mode) or info.st_dev != root_info.st_dev or info.st_uid != uid:
+                    raise ValueError("recovery subtree has an ownership or mount boundary")
+                if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)) or stat.S_IMODE(info.st_mode) & 0o077:
+                    raise ValueError("recovery subtree has an unsafe type or mode")
+                snapshot.append((str(path.relative_to(root)), stable_identity(info)))
+        return snapshot
+
+    descendant_snapshot = scan_subtree()
+
+    query_observations = []
+    for kind in ("container", "network", "volume", "image"):
+        argv = ["docker", kind, "ls"]
+        if kind == "container":
+            argv.append("-a")
+        argv.extend(["-q", "--filter", f"label=com.naraemedia.qa.owner={run_id}", "--filter", f"label=com.naraemedia.qa.project={project}"])
+        completed = subprocess.run(argv, check=True, capture_output=True, text=True, timeout=15)
+        if completed.stderr or completed.stdout.split():
+            raise ValueError(f"fresh {kind} owner/project query was not empty")
+        query_observations.append({"kind": kind, "candidateCount": 0, "exitCode": 0})
+
+    os.lseek(registry_fd, 0, os.SEEK_SET)
+    if hashlib.sha256(os.read(registry_fd, 1024 * 1024 + 1)).hexdigest() != expected_digest:
+        raise ValueError("source registry changed during recovery validation")
+    if stable_identity(os.fstat(registry_fd)) != stable_identity(registry_info) or stable_identity(os.fstat(root_fd)) != stable_identity(root_info) or stable_identity(os.fstat(marker_fd)) != stable_identity(marker_info):
+        raise ValueError("recovery metadata changed during validation")
+    if scan_subtree() != descendant_snapshot:
+        raise ValueError("recovery subtree metadata changed during validation")
+    assert_quiescent()
+    if not re.fullmatch(r"[0-9a-f]{40}", current_head):
+        raise ValueError("current source revision is invalid")
+    docker_intents = [intent for intent in intents if intent["scope"] == "docker"]
+    payload = {
+        "schemaVersion": 1,
+        "recordType": "ink-color-recovery-registration",
+        "scope": "registration-only",
+        "profile": profile,
+        "sealed": True,
+        "recordId": hashlib.sha256(os.urandom(32)).hexdigest(),
+        "sourceRevision": source_revision,
+        "implementationRevision": current_head,
+        "sourceRegistry": {
+            "path": registry_arg,
+            "sha256": expected_digest,
+            "schemaVersion": 2,
+            "sealed": False,
+        },
+        "owner": {"runId": run_id, "project": project},
+        "originalIntents": intents,
+        "unfulfilledDockerIntents": docker_intents,
+        "root": {
+            "path": root_arg,
+            "device": root_info.st_dev,
+            "inode": root_info.st_ino,
+            "uid": root_info.st_uid,
+            "gid": root_info.st_gid,
+            "mode": stat.S_IMODE(root_info.st_mode),
+            "ctimeNs": root_info.st_ctime_ns,
+            "birthtimeNs": round(getattr(root_info, "st_birthtime", root_info.st_ctime) * 1_000_000_000),
+            "markerDevice": marker_info.st_dev,
+            "markerInode": marker_info.st_ino,
+            "markerMatchesOwner": True,
+            "descendantCount": len(descendant_snapshot),
+        },
+        "quiescence": {"launcherPid": launcher_pids[0], "state": "not-running"},
+        "dockerObservation": {"candidateCount": 0, "queries": query_observations},
+        "actions": {"dockerMutationCount": 0, "rootMutationCount": 0},
+        "registeredAtEpoch": int(time.time()),
+    }
+    if record.exists() or record.is_symlink():
+        raise ValueError("recovery registration already exists")
+    fd, temporary = tempfile.mkstemp(prefix=".recovery-registration.", dir=record.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, separators=(",", ":"), sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        if os.environ.get("INK_QA_RECOVERY_INTERRUPT_STAGE") == "before-publish":
+            raise InterruptedError("recovery registration interrupted before publish")
+        os.link(temporary, record, follow_symlinks=False)
+        directory_fd = os.open(record.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        if os.environ.get("INK_QA_RECOVERY_INTERRUPT_STAGE") == "after-publish":
+            raise InterruptedError("recovery registration interrupted after atomic publish")
+    finally:
+        if temporary and os.path.exists(temporary):
+            os.unlink(temporary)
+finally:
+    for fd in (marker_fd, root_fd, registry_fd):
+        if fd >= 0:
+            os.close(fd)
+PY
+    printf 'PASS: sealed registration-only recovery record published without destructive action\n'
 }
 
 run_bounded() {
@@ -1762,9 +2054,13 @@ credential_file=none
 server_pid=compose-owned
 browser_context=none
 EOF
-    registered_compose_up 180 false
+    if [[ "$fixture" == recovery-build-failure ]]; then
+        registered_compose_up 180 true
+    else
+        registered_compose_up 180 false
+    fi
     case "$fixture" in
-        valid|local-contract|resource-replaced|type-mismatch|polluted|cross-project|hung|misleading-prose|empty-query|deletion-failure|interrupt-after-create-before-bind) ;;
+        valid|local-contract|resource-replaced|type-mismatch|polluted|cross-project|hung|misleading-prose|empty-query|deletion-failure|interrupt-after-create-before-bind|recovery-build-failure) ;;
         missing) find "$registry_file" -delete ;;
         corrupt) printf '{"schemaVersion":2,"resources":[' > "$registry_file" ;;
         wrong-version|unsealed|stale)
@@ -1799,7 +2095,7 @@ PY
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --schema-preflight-tests|--smoke|--restore-smoke|--full|--public-baseline|--cleanup-self-test)
+        --schema-preflight-tests|--smoke|--restore-smoke|--full|--public-baseline|--cleanup-self-test|--recovery-registration)
             [[ -z "$mode" ]] || fail "choose exactly one mode"
             mode=$1
             shift
@@ -1809,13 +2105,47 @@ while [[ $# -gt 0 ]]; do
             evidence_dir=$2
             shift 2
             ;;
+        --recovery-root)
+            [[ $# -ge 2 && -z "$recovery_root" ]] || fail "--recovery-root requires exactly one path"
+            recovery_root=$2
+            shift 2
+            ;;
+        --source-registry)
+            [[ $# -ge 2 && -z "$recovery_source_registry" ]] || fail "--source-registry requires exactly one path"
+            recovery_source_registry=$2
+            shift 2
+            ;;
+        --expected-registry-sha256)
+            [[ $# -ge 2 && -z "$recovery_expected_digest" ]] || fail "--expected-registry-sha256 requires exactly one digest"
+            recovery_expected_digest=$2
+            shift 2
+            ;;
+        --source-revision)
+            [[ $# -ge 2 && -z "$recovery_source_revision" ]] || fail "--source-revision requires exactly one revision"
+            recovery_source_revision=$2
+            shift 2
+            ;;
+        --recovery-profile)
+            [[ $# -ge 2 && -z "$recovery_profile" ]] || fail "--recovery-profile requires exactly one profile"
+            recovery_profile=$2
+            shift 2
+            ;;
         *) fail "unknown argument: $1" ;;
     esac
 done
 
 [[ -n "$mode" ]] || mode=--full
 [[ -n "$evidence_dir" ]] || fail "--evidence-dir is required"
-evidence_dir=$(mkdir -p "$evidence_dir" && CDPATH= cd -- "$evidence_dir" && pwd)
+if [[ "$mode" == --recovery-registration ]]; then
+    [[ -n "$recovery_root" && -n "$recovery_source_registry" && -n "$recovery_expected_digest" && -n "$recovery_source_revision" && -n "$recovery_profile" ]] \
+        || fail "recovery registration requires exact root, source registry, digest, source revision, and profile"
+    [[ -d "$evidence_dir" && ! -L "$evidence_dir" ]] || fail "recovery evidence directory must already exist and must not be a symlink"
+    evidence_dir=$(CDPATH= cd -- "$evidence_dir" && pwd)
+else
+    [[ -z "$recovery_root" && -z "$recovery_source_registry" && -z "$recovery_expected_digest" && -z "$recovery_source_revision" && -z "$recovery_profile" ]] \
+        || fail "recovery arguments require --recovery-registration"
+    evidence_dir=$(mkdir -p "$evidence_dir" && CDPATH= cd -- "$evidence_dir" && pwd)
+fi
 for command in docker openssl python3; do
     command -v "$command" >/dev/null 2>&1 || fail "required command not found: $command"
 done
@@ -1828,4 +2158,5 @@ case "$mode" in
     --public-baseline) run_browser_suite public-baseline ;;
     --restore-smoke) run_restore_smoke ;;
     --cleanup-self-test) run_cleanup_self_test ;;
+    --recovery-registration) register_recovery_only ;;
 esac
