@@ -16,6 +16,7 @@ import com.naraesigning.background.BackgroundAssetService;
 import com.naraesigning.background.BackgroundContent;
 import com.naraesigning.board.core.BoardService;
 import com.naraesigning.board.core.PublicBoardLink;
+import com.naraesigning.board.core.SignatureInkColor;
 import com.naraesigning.session.AdminSessionContract;
 import com.naraesigning.session.SessionCookieActions;
 import jakarta.servlet.Filter;
@@ -57,7 +58,8 @@ final class PublicBoardDisplayLeaseHttpTest {
         when(boards.findPublic(TOKEN)).thenReturn(Optional.of(
                 new PublicBoardLink(BOARD, "Secret board title", "OPEN", 1)));
         when(snapshots.publiclyVisible(BOARD)).thenReturn(true);
-        when(snapshots.readPublic(BOARD)).thenReturn(new BoardSnapshot(BOARD, 1920, 1080, false, List.of()));
+        when(snapshots.readPublic(BOARD)).thenReturn(new BoardSnapshot(
+                BOARD, 1920, 1080, false, SignatureInkColor.BLACK, List.of()));
         when(backgrounds.current(BOARD)).thenReturn(Optional.of(new BackgroundContent(
                 new byte[] {1, 2, 3}, "image/png")));
         var admin = adminFixture();

@@ -2,6 +2,7 @@ package com.naraesigning.render;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.naraesigning.board.core.SignatureInkColor;
 import java.awt.Color;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
@@ -17,14 +18,15 @@ final class FinalPngRendererTest {
         // Given
         var slot = new FinalPngSlot(
                 decimal("0.25000000"), decimal("0.25000000"),
-                decimal("0.50000000"), decimal("0.50000000"), true,
+                decimal("0.50000000"), decimal("0.50000000"),
                 List.of(new FinalPngStroke(List.of(
                         new FinalPngPoint(0, 0), new FinalPngPoint(500_000, 500_000),
                         new FinalPngPoint(1_000_000, 0)))));
         var output = new ByteArrayOutputStream();
 
         // When
-        new FinalPngRenderer().render(new FinalPngCanvas(1920, 1080, null, List.of(slot)), output);
+        new FinalPngRenderer().render(
+                new FinalPngCanvas(1920, 1080, null, SignatureInkColor.BLACK, List.of(slot)), output);
 
         // Then
         var png = output.toByteArray();
@@ -47,21 +49,22 @@ final class FinalPngRendererTest {
         graphics.setColor(new Color(12, 34, 56));
         graphics.fillRect(0, 0, 8, 6);
         graphics.dispose();
-        var transparent = new FinalPngSlot(decimal("0.00000000"), decimal("0.00000000"),
-                decimal("0.50000000"), decimal("1.00000000"), false, List.of());
-        var white = new FinalPngSlot(decimal("0.50000000"), decimal("0.00000000"),
-                decimal("0.50000000"), decimal("1.00000000"), true, List.of());
+        var left = new FinalPngSlot(decimal("0.00000000"), decimal("0.00000000"),
+                decimal("0.50000000"), decimal("1.00000000"), List.of());
+        var right = new FinalPngSlot(decimal("0.50000000"), decimal("0.00000000"),
+                decimal("0.50000000"), decimal("1.00000000"), List.of());
         var output = new ByteArrayOutputStream();
 
         // When
-        new FinalPngRenderer().render(new FinalPngCanvas(8, 6, background, List.of(transparent, white)), output);
+        new FinalPngRenderer().render(
+                new FinalPngCanvas(8, 6, background, SignatureInkColor.BLACK, List.of(left, right)), output);
 
         // Then
         var image = ImageIO.read(new ByteArrayInputStream(output.toByteArray()));
         assertThat(image.getWidth()).isEqualTo(8);
         assertThat(image.getHeight()).isEqualTo(6);
         assertThat(image.getRGB(1, 3)).isEqualTo(new Color(12, 34, 56).getRGB());
-        assertThat(image.getRGB(6, 3)).isEqualTo(Color.WHITE.getRGB());
+        assertThat(image.getRGB(6, 3)).isEqualTo(new Color(12, 34, 56).getRGB());
     }
 
     private static BigDecimal decimal(String value) {

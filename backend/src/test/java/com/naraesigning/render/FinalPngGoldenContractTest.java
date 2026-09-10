@@ -1,5 +1,6 @@
 package com.naraesigning.render;
 
+import com.naraesigning.board.core.SignatureInkColor;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.awt.Color;
@@ -20,7 +21,7 @@ final class FinalPngGoldenContractTest {
         var stroke = new FinalPngStroke(List.of(
                 new FinalPngPoint(0, 500_000), new FinalPngPoint(1_000_000, 500_000)));
 
-        var image = render(300, new FinalPngSlot(zero(), zero(), one(), one(), false, List.of(stroke)));
+        var image = render(300, new FinalPngSlot(zero(), zero(), one(), one(), List.of(stroke)));
 
         // Independent Task 18/24 geometry: width=round(300*0.012)=4, radius=2,
         // endpoints=(2,150)/(298,150). Constants below are not derived by the renderer.
@@ -40,7 +41,7 @@ final class FinalPngGoldenContractTest {
                 new FinalPngPoint(500_000, 250_000),
                 new FinalPngPoint(750_000, 750_000)));
 
-        var image = render(1_000, new FinalPngSlot(zero(), zero(), one(), one(), false, List.of(stroke)));
+        var image = render(1_000, new FinalPngSlot(zero(), zero(), one(), one(), List.of(stroke)));
 
         // Independent geometry: width=12, radius=6, vertex=(500,253).
         assertThat(image.getRGB(500, 253)).isEqualTo(Color.BLACK.getRGB());
@@ -64,7 +65,8 @@ final class FinalPngGoldenContractTest {
 
     private static BufferedImage render(int size, FinalPngSlot slot) throws Exception {
         var output = new ByteArrayOutputStream();
-        new FinalPngRenderer().render(new FinalPngCanvas(size, size, null, List.of(slot)), output);
+        new FinalPngRenderer().render(
+                new FinalPngCanvas(size, size, null, SignatureInkColor.BLACK, List.of(slot)), output);
         return ImageIO.read(new ByteArrayInputStream(output.toByteArray()));
     }
 

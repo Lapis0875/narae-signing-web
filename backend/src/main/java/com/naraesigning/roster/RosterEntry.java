@@ -15,6 +15,5 @@ public record RosterEntry(
             BigDecimal y,
             BigDecimal width,
             BigDecimal height,
-            String backgroundColor,
             long revision) {}
 }

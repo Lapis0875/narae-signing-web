@@ -10,7 +10,7 @@ import org.springframework.jdbc.core.JdbcOperations;
 
 final class JdbcBoardRepository implements BoardRepository {
     private static final String COLUMNS = """
-            id, owner_id, title, status, canvas_width, canvas_height,
+            id, owner_id, title, status, canvas_width, canvas_height, signature_ink_color,
             share_link_version, share_token_lookup_hash, share_token_ciphertext,
             share_token_nonce, share_token_key_version, created_at, updated_at
             """;
@@ -26,14 +26,15 @@ final class JdbcBoardRepository implements BoardRepository {
         var encrypted = share.encryptedToken();
         return required(jdbc.query("""
                 insert into board (
-                    id, owner_id, title, status, canvas_width, canvas_height,
+                    id, owner_id, title, status, canvas_width, canvas_height, signature_ink_color,
                     share_link_version, share_token_lookup_hash, share_token_ciphertext,
                     share_token_nonce, share_token_key_version)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 returning %s
                 """.formatted(COLUMNS), resultSet -> resultSet.next() ? map(resultSet) : null,
                 board.id(), board.owner().id(), board.title().value(), board.status().name(),
-                board.canvasWidth(), board.canvasHeight(), share.version(), share.lookupHash(),
+                board.canvasWidth(), board.canvasHeight(), board.signatureInkColor().databaseValue(),
+                share.version(), share.lookupHash(),
                 encrypted.ciphertext(), encrypted.nonce(), encrypted.keyVersion()));
     }
 
@@ -56,6 +57,16 @@ final class JdbcBoardRepository implements BoardRepository {
     }
 
     @Override
+    public Optional<StoredBoard> lock(BoardOwner owner, UUID boardId) {
+        return optional(jdbc.query("""
+                select %s from board
+                where owner_id = ? and id = ? and status <> 'DELETING'
+                for update
+                """.formatted(COLUMNS), resultSet -> resultSet.next() ? map(resultSet) : null,
+                owner.id(), boardId));
+    }
+
+    @Override
     public Optional<StoredBoard> rename(BoardOwner owner, UUID boardId, BoardTitle title) {
         return optional(jdbc.query("""
                 update board set title = ?, updated_at = current_timestamp
@@ -63,6 +74,17 @@ final class JdbcBoardRepository implements BoardRepository {
                 returning %s
                 """.formatted(COLUMNS), resultSet -> resultSet.next() ? map(resultSet) : null,
                 title.value(), owner.id(), boardId));
+    }
+
+    @Override
+    public Optional<StoredBoard> patch(BoardOwner owner, UUID boardId, BoardTitle title,
+            SignatureInkColor signatureInkColor) {
+        return optional(jdbc.query("""
+                update board set title = ?, signature_ink_color = ?, updated_at = current_timestamp
+                where owner_id = ? and id = ? and status <> 'DELETING'
+                returning %s
+                """.formatted(COLUMNS), resultSet -> resultSet.next() ? map(resultSet) : null,
+                title.value(), signatureInkColor.databaseValue(), owner.id(), boardId));
     }
 
     @Override
@@ -115,6 +137,7 @@ final class JdbcBoardRepository implements BoardRepository {
                 BoardStatus.valueOf(resultSet.getString("status")),
                 resultSet.getInt("canvas_width"),
                 resultSet.getInt("canvas_height"),
+                SignatureInkColor.fromDatabase(resultSet.getString("signature_ink_color")),
                 new StoredShare(
                         resultSet.getInt("share_link_version"),
                         resultSet.getBytes("share_token_lookup_hash"),

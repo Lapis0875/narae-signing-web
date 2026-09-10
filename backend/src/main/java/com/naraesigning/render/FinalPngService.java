@@ -1,6 +1,7 @@
 package com.naraesigning.render;
 
 import com.naraesigning.background.BackgroundObjectStore;
+import com.naraesigning.board.core.SignatureInkColor;
 import com.naraesigning.crypto.CryptoContext;
 import com.naraesigning.crypto.EncryptedValue;
 import com.naraesigning.crypto.VersionedCryptoService;
@@ -35,6 +36,9 @@ final class FinalPngService {
         try {
             var snapshot = snapshots.readClosed(ownerId, boardId);
             var background = readBackground(snapshot);
+            if (background == null && snapshot.signatureInkColor() != SignatureInkColor.BLACK) {
+                throw FinalPngException.unavailable();
+            }
             var slots = new ArrayList<FinalPngSlot>();
             var parser = new FinalPngStrokeParser();
             for (var encryptedSlot : snapshot.slots()) {
@@ -42,11 +46,12 @@ final class FinalPngService {
                         ? java.util.List.<FinalPngStroke>of()
                         : decryptStrokes(encryptedSlot, parser);
                 slots.add(new FinalPngSlot(encryptedSlot.x(), encryptedSlot.y(), encryptedSlot.width(),
-                        encryptedSlot.height(), encryptedSlot.white(), strokes));
+                        encryptedSlot.height(), strokes));
             }
             var width = background == null ? 1920 : snapshot.width();
             var height = background == null ? 1080 : snapshot.height();
-            new FinalPngRenderer().render(new FinalPngCanvas(width, height, background, slots), output);
+            new FinalPngRenderer().render(
+                    new FinalPngCanvas(width, height, background, snapshot.signatureInkColor(), slots), output);
         } catch (FinalPngException exception) {
             throw exception;
         } catch (Exception exception) {

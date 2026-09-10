@@ -60,7 +60,7 @@ class FlywaySchemaIT {
                     + UUID.randomUUID() + "','" + roster + "','PLACED',0.1,0.1,0.3,0.2)");
 
             // Then: versions/tables exist, retry is clean, and duplicate identity is rejected.
-            assertThat(first.migrationsExecuted).isEqualTo(5);
+            assertThat(first.migrationsExecuted).isEqualTo(6);
             assertThat(second.migrationsExecuted).isZero();
             try (var tables = connection.getMetaData().getTables(null, "public", "%", new String[] {"TABLE"})) {
                 var names = new java.util.HashSet<String>();
@@ -84,10 +84,12 @@ class FlywaySchemaIT {
                 assertThat(names).contains(
                         "board.share_link_version", "board.share_token_lookup_hash", "board.share_token_ciphertext",
                         "board.share_token_nonce", "board.share_token_key_version", "signature_slot.slot_revision",
+                        "board.signature_ink_color",
                         "background_asset.object_key_nonce", "background_asset.object_key_key_version",
                         "board_deletion_job.reason", "admin_login_ip_window.attempt_count",
                         "login_failure_state.locked_until", "signature_slot.active_signer_claim",
                         "signature_slot.active_signer_claim_expires_at");
+                assertThat(names).doesNotContain("signature_slot.background_color");
             }
             assertThatThrownBy(() -> statement.execute("UPDATE signature_slot SET active_signer_claim='"
                     + UUID.randomUUID() + "' WHERE roster_entry_id='" + roster + "'"))

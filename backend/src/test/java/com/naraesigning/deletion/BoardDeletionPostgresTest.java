@@ -139,7 +139,7 @@ class BoardDeletionPostgresTest {
                     .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
                     .locations("classpath:db/migration")
                     .load();
-            assertThat(flyway.migrate().migrationsExecuted).isEqualTo(5);
+            assertThat(flyway.migrate().migrationsExecuted).isEqualTo(6);
             var setup = new JdbcTemplate(dataSource(postgres, "task28-setup"));
 
             assertPhaseAEventOnlyAfterCommit(setup, postgres);

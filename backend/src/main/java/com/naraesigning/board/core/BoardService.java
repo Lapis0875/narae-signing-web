@@ -36,6 +36,7 @@ public final class BoardService {
                 BoardStatus.DRAFT,
                 DEFAULT_CANVAS_WIDTH,
                 DEFAULT_CANVAS_HEIGHT,
+                SignatureInkColor.BLACK,
                 issued.stored()));
         return new CreatedBoard(BoardView.from(stored), issued.rawToken());
     }
@@ -50,6 +51,19 @@ public final class BoardService {
 
     public BoardView rename(BoardOwner owner, UUID boardId, String rawTitle) {
         return BoardView.from(repository.rename(owner, boardId, new BoardTitle(rawTitle))
+                .orElseThrow(BoardUnavailableException::new));
+    }
+
+    public BoardView lock(BoardOwner owner, UUID boardId) {
+        return BoardView.from(repository.lock(owner, boardId).orElseThrow(BoardUnavailableException::new));
+    }
+
+    public BoardView patchLocked(BoardOwner owner, UUID boardId, String rawTitle, boolean titlePresent,
+            SignatureInkColor signatureInkColor, boolean signatureInkColorPresent) {
+        var current = repository.find(owner, boardId).orElseThrow(BoardUnavailableException::new);
+        var title = titlePresent ? new BoardTitle(rawTitle) : current.title();
+        var color = signatureInkColorPresent ? signatureInkColor : current.signatureInkColor();
+        return BoardView.from(repository.patch(owner, boardId, title, color)
                 .orElseThrow(BoardUnavailableException::new));
     }
 

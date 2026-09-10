@@ -28,15 +28,13 @@ class SlotServiceTest {
 
         // When
         for (int index = 0; index < slots.size(); index++) {
-            service.updateVisual(BOARD_ID, slots.get(index), bounds(index * 4, 0, 4, 100),
-                    index % 2 == 0 ? SlotBackground.TRANSPARENT : SlotBackground.WHITE);
+            service.updateVisual(BOARD_ID, slots.get(index), bounds(index * 4, 0, 4, 100));
         }
-        service.updateVisual(BOARD_ID, slots.get(0), bounds(0, 0, 4, 50), SlotBackground.WHITE);
+        service.updateVisual(BOARD_ID, slots.get(0), bounds(0, 0, 4, 50));
 
         // Then
         assertThat(repository.slots()).hasSize(25).allMatch(Slot::placed);
         assertThat(repository.required(slots.get(0)).revision()).isEqualTo(1);
-        assertThat(repository.required(slots.get(0)).background()).isEqualTo(SlotBackground.WHITE);
         assertThat(repository.trace()).startsWith("board:" + BOARD_ID);
         assertThat(repository.lockedSlotIds()).isSortedAccordingTo(Comparator.comparing(UUID::toString));
         System.out.println("QA slot_25_visual=success touching_edges=accepted revision=1");
@@ -48,13 +46,13 @@ class SlotServiceTest {
         var repository = repository(2);
         var service = new SlotService(repository);
         var slots = repository.slotIds();
-        service.updateVisual(BOARD_ID, slots.get(0), bounds(0, 0, 50, 50), SlotBackground.TRANSPARENT);
+        service.updateVisual(BOARD_ID, slots.get(0), bounds(0, 0, 50, 50));
         var beforeConflict = repository.snapshot();
         var writesBeforeConflict = repository.writeCount();
 
         // When / Then
         assertThatThrownBy(() -> service.updateVisual(
-                BOARD_ID, slots.get(1), bounds(49, 0, 50, 50), SlotBackground.WHITE))
+                BOARD_ID, slots.get(1), bounds(49, 0, 50, 50)))
                 .isInstanceOf(SlotConflictException.class)
                 .extracting("code").isEqualTo(SlotConflictException.Code.OVERLAP);
         assertThat(repository.snapshot()).isEqualTo(beforeConflict);
@@ -72,7 +70,7 @@ class SlotServiceTest {
         var repository = repository(1);
         var service = new SlotService(repository);
         var slotId = repository.slotIds().get(0);
-        service.updateVisual(BOARD_ID, slotId, bounds(0, 0, 25, 25), SlotBackground.WHITE);
+        service.updateVisual(BOARD_ID, slotId, bounds(0, 0, 25, 25));
         repository.seedSubmitted(slotId);
 
         // When / Then
@@ -90,9 +88,8 @@ class SlotServiceTest {
             assertThat(slot.revision()).isEqualTo(4);
             assertThat(slot.placed()).isFalse();
             assertThat(slot.bounds()).isNull();
-            assertThat(slot.background()).isEqualTo(SlotBackground.TRANSPARENT);
         });
-        service.updateVisual(BOARD_ID, slotId, bounds(25, 25, 25, 25), SlotBackground.WHITE);
+        service.updateVisual(BOARD_ID, slotId, bounds(25, 25, 25, 25));
         assertThat(repository.required(slotId).revision()).isEqualTo(5);
         System.out.println("QA slot_revision place=1 move=1 reset=2 identity=3 delete=4 reassign=5");
     }
@@ -112,7 +109,7 @@ class SlotServiceTest {
             for (var slotId : slots) {
                 executor.submit(() -> {
                     try {
-                        service.updateVisual(BOARD_ID, slotId, bounds(0, 0, 50, 50), SlotBackground.TRANSPARENT);
+                        service.updateVisual(BOARD_ID, slotId, bounds(0, 0, 50, 50));
                         successes.incrementAndGet();
                     } catch (SlotConflictException exception) {
                         if (exception.code() == SlotConflictException.Code.OVERLAP) conflicts.incrementAndGet();
@@ -136,7 +133,7 @@ class SlotServiceTest {
         var repository = repository(1);
         var service = new SlotService(repository);
         var slotId = repository.slotIds().get(0);
-        service.updateVisual(BOARD_ID, slotId, bounds(0, 0, 50, 25), SlotBackground.TRANSPARENT);
+        service.updateVisual(BOARD_ID, slotId, bounds(0, 0, 50, 25));
         var submitReady = new CountDownLatch(1);
         var resetDone = new CountDownLatch(1);
         var submitFailure = new AtomicReference<Throwable>();
@@ -177,11 +174,11 @@ class SlotServiceTest {
         var repository = repository(1);
         var service = new SlotService(repository);
         var slotId = repository.slotIds().get(0);
-        service.updateVisual(BOARD_ID, slotId, bounds(0, 0, 50, 25), SlotBackground.TRANSPARENT);
+        service.updateVisual(BOARD_ID, slotId, bounds(0, 0, 50, 25));
         var revision = repository.required(slotId).revision();
 
         // When
-        service.updateVisual(BOARD_ID, slotId, bounds(0, 0, 50, 50), SlotBackground.TRANSPARENT);
+        service.updateVisual(BOARD_ID, slotId, bounds(0, 0, 50, 50));
 
         // Then
         assertThat(repository.required(slotId).revision()).isEqualTo(revision);
@@ -212,7 +209,7 @@ class SlotServiceTest {
         var repository = repository(1, 2000, 1000);
         var service = new SlotService(repository);
         var slotId = repository.slotIds().get(0);
-        service.updateVisual(BOARD_ID, slotId, bounds(0, 0, 50, 50), SlotBackground.TRANSPARENT);
+        service.updateVisual(BOARD_ID, slotId, bounds(0, 0, 50, 50));
 
         // When / Then
         assertThatThrownBy(() -> service.submit(BOARD_ID, slotId, 1, CanonicalAspect.of(decimal("1")),

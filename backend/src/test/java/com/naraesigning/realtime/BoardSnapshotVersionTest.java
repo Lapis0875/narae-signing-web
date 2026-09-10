@@ -3,6 +3,7 @@ package com.naraesigning.realtime;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.naraesigning.board.core.SignatureInkColor;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
@@ -26,19 +27,23 @@ class BoardSnapshotVersionTest {
     void snapshotCarriesEpochAndRevisionForClientVersionComparison() {
         // Given
         var slot = slot(4, 7);
-        var snapshot = new BoardSnapshot(UUID.randomUUID(), 100, 100, false, List.of(slot));
+        var snapshot = new BoardSnapshot(
+                UUID.randomUUID(), 100, 100, false, SignatureInkColor.BLACK, List.of(slot));
 
         // When
         var json = new ObjectMapper().valueToTree(snapshot).get("slots").get(0);
+        var snapshotJson = new ObjectMapper().valueToTree(snapshot);
 
         // Then
         assertThat(json.get("draftEpoch").longValue()).isEqualTo(4);
         assertThat(json.get("revision").longValue()).isEqualTo(7);
+        assertThat(json.has("background")).isFalse();
+        assertThat(snapshotJson.get("signatureInkColor").textValue()).isEqualTo("black");
     }
 
     private static BoardSnapshot.Slot slot(long epoch, long revision) {
         return new BoardSnapshot.Slot(
                 UUID.randomUUID(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ONE, BigDecimal.ONE,
-                "#ffffff", null, null, epoch, revision);
+                null, null, epoch, revision);
     }
 }

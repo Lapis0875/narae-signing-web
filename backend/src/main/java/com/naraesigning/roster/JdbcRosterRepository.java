@@ -16,7 +16,7 @@ final class JdbcRosterRepository implements RosterRepository {
     private static final String COLUMNS = """
             r.id, r.board_id, r.encrypted_identity, r.identity_nonce, r.identity_key_version,
             r.identity_hmac, r.submitted, s.id slot_id, s.placement_status, s.x, s.y,
-            s.width, s.height, s.background_color, s.slot_revision
+            s.width, s.height, s.slot_revision
             """;
     private final JdbcOperations jdbc;
 
@@ -132,8 +132,7 @@ final class JdbcRosterRepository implements RosterRepository {
                 new StoredSlot(resultSet.getObject("slot_id", UUID.class),
                         resultSet.getString("placement_status"), resultSet.getBigDecimal("x"),
                         resultSet.getBigDecimal("y"), resultSet.getBigDecimal("width"),
-                        resultSet.getBigDecimal("height"), resultSet.getString("background_color"),
-                        resultSet.getLong("slot_revision")));
+                        resultSet.getBigDecimal("height"), resultSet.getLong("slot_revision")));
     }
 
     private static String key(byte[] value) {

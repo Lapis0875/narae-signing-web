@@ -1,6 +1,7 @@
 package com.naraesigning.render;
 
 import com.naraesigning.crypto.EncryptedValue;
+import com.naraesigning.board.core.SignatureInkColor;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
@@ -23,13 +24,14 @@ final class JdbcFinalPngSnapshotRepository implements FinalPngSnapshotRepository
             var board = lockBoard(boardId);
             if (!board.ownerId().equals(ownerId)) throw FinalPngException.forbidden();
             if (!"CLOSED".equals(board.status())) throw FinalPngException.notClosed();
-            return new FinalPngSnapshot(board.width(), board.height(), board.background(), lockSlots(boardId));
+            return new FinalPngSnapshot(board.width(), board.height(), board.signatureInkColor(),
+                    board.background(), lockSlots(boardId));
         });
     }
 
     private BoardRow lockBoard(UUID boardId) {
         var board = jdbc.query("""
-                select b.owner_id, b.status, b.canvas_width, b.canvas_height,
+                select b.owner_id, b.status, b.canvas_width, b.canvas_height, b.signature_ink_color,
                        a.id background_id, a.encrypted_object_key, a.object_key_nonce,
                        a.object_key_key_version
                 from board b left join background_asset a on a.id = b.background_asset_id
@@ -41,7 +43,7 @@ final class JdbcFinalPngSnapshotRepository implements FinalPngSnapshotRepository
 
     private List<FinalPngEncryptedSlot> lockSlots(UUID boardId) {
         return jdbc.query("""
-                select s.id, s.x, s.y, s.width, s.height, s.background_color,
+                select s.id, s.x, s.y, s.width, s.height,
                        s.encrypted_strokes, s.strokes_nonce, s.strokes_key_version
                 from signature_slot s join roster_entry r on r.id = s.roster_entry_id
                 where r.board_id = ? and s.placement_status = 'PLACED'
@@ -55,7 +57,8 @@ final class JdbcFinalPngSnapshotRepository implements FinalPngSnapshotRepository
                 new EncryptedValue(result.getBytes("encrypted_object_key"),
                         result.getBytes("object_key_nonce"), result.getInt("object_key_key_version")));
         return new BoardRow(result.getObject("owner_id", UUID.class), result.getString("status"),
-                result.getInt("canvas_width"), result.getInt("canvas_height"), background);
+                result.getInt("canvas_width"), result.getInt("canvas_height"),
+                SignatureInkColor.fromDatabase(result.getString("signature_ink_color")), background);
     }
 
     private static FinalPngEncryptedSlot mapSlot(ResultSet result) throws SQLException {
@@ -65,9 +68,10 @@ final class JdbcFinalPngSnapshotRepository implements FinalPngSnapshotRepository
         return new FinalPngEncryptedSlot(result.getObject("id", UUID.class),
                 result.getBigDecimal("x"), result.getBigDecimal("y"),
                 result.getBigDecimal("width"), result.getBigDecimal("height"),
-                "white".equalsIgnoreCase(result.getString("background_color")), strokes);
+                strokes);
     }
 
     private record BoardRow(
-            UUID ownerId, String status, int width, int height, FinalPngBackground background) {}
+            UUID ownerId, String status, int width, int height, SignatureInkColor signatureInkColor,
+            FinalPngBackground background) {}
 }

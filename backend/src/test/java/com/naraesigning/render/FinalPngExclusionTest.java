@@ -1,5 +1,6 @@
 package com.naraesigning.render;
 
+import com.naraesigning.board.core.SignatureInkColor;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.awt.Color;
@@ -26,7 +27,8 @@ final class FinalPngExclusionTest {
         var background = ImageIO.read(new ByteArrayInputStream(sourcePng));
         var output = new ByteArrayOutputStream();
 
-        new FinalPngRenderer().render(new FinalPngCanvas(64, 32, background, List.of()), output);
+        new FinalPngRenderer().render(
+                new FinalPngCanvas(64, 32, background, SignatureInkColor.BLACK, List.of()), output);
 
         var rendered = output.toByteArray();
         var image = ImageIO.read(new ByteArrayInputStream(rendered));

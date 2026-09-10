@@ -80,7 +80,7 @@ final class InMemoryRosterRepository implements RosterRepository {
                 value.id(), value.boardId(), value.identity(), value.hmac(), value.submitted(),
                 new StoredSlot(value.slot().id(), "PLACED", new java.math.BigDecimal("0.1"),
                         new java.math.BigDecimal("0.2"), new java.math.BigDecimal("0.3"),
-                        new java.math.BigDecimal("0.4"), "white", 7)));
+                        new java.math.BigDecimal("0.4"), 7)));
     }
     void failAfterFirstReplacementMutation() { failAfterFirstReplacementMutation = true; }
     int replacementMutationCount() { return replacementMutationCount; }
@@ -117,6 +117,6 @@ final class InMemoryRosterRepository implements RosterRepository {
 
     private static StoredRosterEntry stored(UUID boardId, NewRosterEntry entry) {
         return new StoredRosterEntry(entry.id(), boardId, entry.identity(), entry.hmac(), false,
-                new StoredSlot(entry.slotId(), "UNPLACED", null, null, null, null, null, 0));
+                new StoredSlot(entry.slotId(), "UNPLACED", null, null, null, null, 0));
     }
 }

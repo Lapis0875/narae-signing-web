@@ -171,6 +171,7 @@ final class DeletionAccessProbe {
                             when(result.getString("status")).thenReturn(persistedStatus.orElseThrow());
                             when(result.getInt("canvas_width")).thenReturn(1920);
                             when(result.getInt("canvas_height")).thenReturn(1080);
+                            when(result.getString("signature_ink_color")).thenReturn("black");
                         }
                     } else {
                         requireDeletingExclusion(sql);

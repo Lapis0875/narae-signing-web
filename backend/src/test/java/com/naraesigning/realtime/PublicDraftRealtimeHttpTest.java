@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.naraesigning.background.BackgroundAssetService;
 import com.naraesigning.board.core.BoardService;
 import com.naraesigning.board.core.PublicBoardLink;
+import com.naraesigning.board.core.SignatureInkColor;
 import com.naraesigning.session.AdminSessionContract;
 import jakarta.servlet.http.Cookie;
 import java.math.BigDecimal;
@@ -232,9 +233,10 @@ final class PublicDraftRealtimeHttpTest {
 
     private BoardSnapshot snapshot() {
         var current = live.snapshot(BOARD, SLOT);
-        return new BoardSnapshot(BOARD, 1920, 1080, false, List.of(new BoardSnapshot.Slot(
+        return new BoardSnapshot(BOARD, 1920, 1080, false, SignatureInkColor.BLACK,
+                List.of(new BoardSnapshot.Slot(
                 SLOT, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ONE, BigDecimal.ONE,
-                "#fff", null, current.signature(), current.draftEpoch(), current.revision())));
+                null, current.signature(), current.draftEpoch(), current.revision())));
     }
 
     private static DraftDelta delta(DraftDelta.Operation operation, long sequence,

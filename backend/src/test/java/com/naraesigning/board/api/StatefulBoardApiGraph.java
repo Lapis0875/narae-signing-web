@@ -18,7 +18,6 @@ import com.naraesigning.roster.RosterService;
 import com.naraesigning.realtime.BoardMutationEvent;
 import com.naraesigning.realtime.LiveSignatureRegistry;
 import com.naraesigning.slot.Slot;
-import com.naraesigning.slot.SlotBackground;
 import com.naraesigning.slot.SlotBounds;
 import com.naraesigning.slot.SlotService;
 import java.lang.reflect.Constructor;
@@ -102,8 +101,7 @@ final class StatefulBoardApiGraph {
                 + ",submitted=" + entry.submitted() + ",storedSlot={id=" + storedSlot.id()
                 + ",placement=" + storedSlot.placementStatus() + ",x=" + value(storedSlot.x())
                 + ",y=" + value(storedSlot.y()) + ",width=" + value(storedSlot.width())
-                + ",height=" + value(storedSlot.height()) + ",background=" + storedSlot.backgroundColor()
-                + ",revision=" + storedSlot.revision() + "}}";
+                + ",height=" + value(storedSlot.height()) + ",revision=" + storedSlot.revision() + "}}";
     }
 
     private Object slotCall(InvocationOnMock invocation) {
@@ -115,16 +113,13 @@ final class StatefulBoardApiGraph {
         return switch (invocation.getMethod().getName()) {
             case "updateVisual" -> {
                 var bounds = (SlotBounds) invocation.getArgument(2);
-                var color = (SlotBackground) invocation.getArgument(3);
                 roster.invokeRepository("place", entry.id());
                 if (state.bounds == null) state.revision++;
                 state.bounds = bounds;
-                state.background = color;
                 yield state.view(targetBoard, entry.id(), entry.submitted());
             }
             case "delete" -> {
                 state.bounds = null;
-                state.background = SlotBackground.TRANSPARENT;
                 state.signatureDigest = null;
                 state.revision++;
                 roster.invokeRepository("resetSubmitted", entry.id());
@@ -142,6 +137,10 @@ final class StatefulBoardApiGraph {
 
     private Object backgroundCall(InvocationOnMock invocation) {
         boardCore.requireBoard(invocation.getArgument(0));
+        if ("current".equals(invocation.getMethod().getName())) {
+            return java.util.Optional.ofNullable(background).map(value -> mock(
+                    com.naraesigning.background.BackgroundContent.class));
+        }
         var bytes = (byte[]) invocation.getArgument(1);
         background = new BackgroundState(BACKGROUND_ID, 1920, 1080, "image/png", digest(bytes));
         return new BackgroundAssetView(BACKGROUND_ID, 1920, 1080, "image/png");
@@ -283,12 +282,11 @@ final class StatefulBoardApiGraph {
         @Override public List<BoardView> list(BoardOwner owner) { return delegate.list(owner); }
         @Override public CreatedBoard create(BoardOwner owner, String title) { return delegate.create(owner, title); }
         @Override public BoardView detail(BoardOwner owner, UUID boardId) { return delegate.detail(owner, boardId); }
-        @Override public BoardView rename(BoardOwner owner, UUID boardId, String title) {
-            return delegate.rename(owner, boardId, title);
+        @Override public BoardView patch(BoardOwner owner, UUID boardId, BoardPatch patch) {
+            return delegate.patch(owner, boardId, patch);
         }
-        @Override public Slot updateSlot(BoardOwner owner, UUID boardId, UUID slotId,
-                SlotBounds bounds, SlotBackground background) {
-            return delegate.updateSlot(owner, boardId, slotId, bounds, background);
+        @Override public Slot updateSlot(BoardOwner owner, UUID boardId, UUID slotId, SlotBounds bounds) {
+            return delegate.updateSlot(owner, boardId, slotId, bounds);
         }
         @Override public Slot deleteSlot(BoardOwner owner, UUID boardId, UUID slotId) {
             return delegate.deleteSlot(owner, boardId, slotId);
@@ -312,14 +310,12 @@ final class StatefulBoardApiGraph {
     private static final class SlotState {
         private final UUID id;
         private SlotBounds bounds;
-        private SlotBackground background;
         private long revision;
         private String signatureDigest;
 
-        private SlotState(UUID id, SlotBounds bounds, SlotBackground background, long revision) {
+        private SlotState(UUID id, SlotBounds bounds, long revision) {
             this.id = id;
             this.bounds = bounds;
-            this.background = background;
             this.revision = revision;
         }
 
@@ -327,12 +323,11 @@ final class StatefulBoardApiGraph {
             var slot = entry.slot();
             var bounds = "PLACED".equals(slot.placementStatus())
                     ? SlotBounds.of(slot.x(), slot.y(), slot.width(), slot.height()) : null;
-            return new SlotState(slot.id(), bounds, SlotBackground.fromDatabase(slot.backgroundColor()),
-                    slot.revision());
+            return new SlotState(slot.id(), bounds, slot.revision());
         }
 
         private Slot view(UUID boardId, UUID entryId, boolean submitted) {
-            return new Slot(boardId, id, entryId, bounds, background, revision,
+            return new Slot(boardId, id, entryId, bounds, revision,
                     submitted, signatureDigest != null);
         }
 
@@ -341,8 +336,8 @@ final class StatefulBoardApiGraph {
                     + (bounds == null ? "null" : value(bounds.x())) + ",y="
                     + (bounds == null ? "null" : value(bounds.y())) + ",width="
                     + (bounds == null ? "null" : value(bounds.width())) + ",height="
-                    + (bounds == null ? "null" : value(bounds.height())) + ",background=" + background
-                    + ",revision=" + revision + ",signaturePresent=" + (signatureDigest != null)
+                    + (bounds == null ? "null" : value(bounds.height())) + ",revision=" + revision
+                    + ",signaturePresent=" + (signatureDigest != null)
                     + ",signatureDigest=" + signatureDigest + "}";
         }
     }

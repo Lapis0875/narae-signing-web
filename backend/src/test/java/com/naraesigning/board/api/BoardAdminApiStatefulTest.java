@@ -133,6 +133,156 @@ final class BoardAdminApiStatefulTest {
     }
 
     @Test
+    void titleOnlyPatchRemainsAvailableInDraftOpenAndClosedStates() throws Exception {
+        var session = session(OWNER, NOW);
+        perform(post("/api/v1/admin/boards").contentType(APPLICATION_JSON)
+                .content("{\"title\":\"draft title\"}"), session).andExpect(status().isOk());
+
+        perform(patch(boardPath()).contentType(APPLICATION_JSON)
+                .content("{\"title\":\"draft renamed\"}"), session)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.title").value("draft renamed"));
+
+        var roster = perform(post(rosterPath()).contentType(APPLICATION_JSON).content(identity("A")), session)
+                .andExpect(status().isOk()).andReturn();
+        UUID slotId = UUID.fromString(json(roster, "/slot/id"));
+        perform(patch(boardPath() + "/slots/" + slotId).contentType(APPLICATION_JSON)
+                .content(slotBody()), session).andExpect(status().isOk());
+        perform(post(boardPath() + "/open"), session).andExpect(status().isOk());
+
+        perform(patch(boardPath()).contentType(APPLICATION_JSON)
+                .content("{\"title\":\"open renamed\"}"), session)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.title").value("open renamed"));
+        perform(post(boardPath() + "/close"), session).andExpect(status().isOk());
+        perform(patch(boardPath()).contentType(APPLICATION_JSON)
+                .content("{\"title\":\"closed renamed\"}"), session)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.title").value("closed renamed"));
+
+        assertThat(graph.canonicalGraph()).contains("status=CLOSED", "events=[board-updated, layout-updated, "
+                + "OPEN, board-updated, CLOSED, board-updated]");
+        System.out.println("QA_BASELINE titleOnlyPatch states=DRAFT,OPEN,CLOSED finalTitle=closed renamed "
+                + "boardUpdatedEvents=3");
+    }
+
+    @Test
+    void invalidTitleTakesPrecedenceOverColorStateGateInOpen() throws Exception {
+        var session = session(OWNER, NOW);
+        openCompleteBoard(session);
+
+        assertMixedTitleColorRejectedInCurrentState(session, "OPEN");
+    }
+
+    @Test
+    void invalidTitleTakesPrecedenceOverColorStateGateInClosed() throws Exception {
+        var session = session(OWNER, NOW);
+        openCompleteBoard(session);
+        perform(post(boardPath() + "/close"), session).andExpect(status().isOk());
+
+        assertMixedTitleColorRejectedInCurrentState(session, "CLOSED");
+    }
+
+    @Test
+    void authenticationAndOwnershipStillPrecedeMixedPatchTitleValidation() throws Exception {
+        var ownerSession = session(OWNER, NOW);
+        perform(post("/api/v1/admin/boards").contentType(APPLICATION_JSON)
+                .content("{\"title\":\"protected precedence board\"}"), ownerSession)
+                .andExpect(status().isOk());
+        var invalidMixedPatch = "{\"title\":\" \",\"signatureInkColor\":\"white\"}";
+
+        assertRejectedUnchanged("mixed-patch-other-owner", patch(boardPath()).secure(true)
+                        .session(session(OTHER_OWNER, NOW)).contentType(APPLICATION_JSON)
+                        .content(invalidMixedPatch),
+                404, "BOARD_UNAVAILABLE");
+        assertRejectedUnchanged("mixed-patch-unauthenticated", patch(boardPath()).secure(true)
+                        .contentType(APPLICATION_JSON).content(invalidMixedPatch),
+                401, "UNAUTHORIZED");
+    }
+
+    @Test
+    void draftBoardWithBackgroundAcceptsStrictWhiteInkPatch() throws Exception {
+        var session = session(OWNER, NOW);
+        perform(post("/api/v1/admin/boards").contentType(APPLICATION_JSON)
+                .content("{\"title\":\"ink board\"}"), session).andExpect(status().isOk());
+        var background = new MockMultipartFile("file", "background.png", "image/png", new byte[] {1, 2, 3});
+        perform(multipart(boardPath() + "/background").file(background), session).andExpect(status().isOk());
+
+        perform(patch(boardPath()).contentType(APPLICATION_JSON)
+                .content("{\"signatureInkColor\":\"white\"}"), session)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.signatureInkColor").value("white"));
+    }
+
+    @Test
+    void boardPatchStrictlyRejectsMalformedBodiesWithoutMutation() throws Exception {
+        var session = session(OWNER, NOW);
+        perform(post("/api/v1/admin/boards").contentType(APPLICATION_JSON)
+                .content("{\"title\":\"strict board\"}"), session).andExpect(status().isOk());
+
+        for (String body : new String[] {"null", "[]", "{}"}) {
+            assertRejectedUnchanged("empty-patch-" + body, authenticated(patch(boardPath())
+                    .contentType(APPLICATION_JSON).content(body), session),
+                    400, "BOARD_PATCH_EMPTY");
+        }
+        assertRejectedUnchanged("malformed-json", authenticated(patch(boardPath())
+                .contentType(APPLICATION_JSON).content("{"), session), 400, "INVALID_REQUEST");
+        for (String body : new String[] {
+                "{\"signatureInkColor\":null}",
+                "{\"signatureInkColor\":1}",
+                "{\"signatureInkColor\":\"BLACK\"}",
+                "{\"signatureInkColor\":\"\"}",
+                "{\"signatureInkColor\":\"blue\"}"}) {
+            assertRejectedUnchanged("invalid-color-" + body, authenticated(patch(boardPath())
+                    .contentType(APPLICATION_JSON).content(body), session),
+                    400, "SIGNATURE_INK_COLOR_INVALID");
+        }
+        assertRejectedUnchanged("removed-slot-background", authenticated(patch(boardPath())
+                .contentType(APPLICATION_JSON).content("{\"background\":\"white\"}"), session),
+                400, "INVALID_REQUEST");
+        assertRejectedUnchanged("create-color-owned", authenticated(post("/api/v1/admin/boards")
+                .contentType(APPLICATION_JSON)
+                .content("{\"title\":\"x\",\"signatureInkColor\":\"white\"}"), session),
+                400, "INVALID_REQUEST");
+    }
+
+    @Test
+    void colorPatchEnforcesDraftBackgroundAtomicityAndSameValueRules() throws Exception {
+        var session = session(OWNER, NOW);
+        perform(post("/api/v1/admin/boards").contentType(APPLICATION_JSON)
+                .content("{\"title\":\"atomic board\"}"), session).andExpect(status().isOk());
+
+        assertRejectedUnchanged("white-without-background", authenticated(patch(boardPath())
+                .contentType(APPLICATION_JSON).content("{\"signatureInkColor\":\"white\"}"), session),
+                409, "SIGNATURE_INK_BACKGROUND_REQUIRED");
+        perform(patch(boardPath()).contentType(APPLICATION_JSON)
+                .content("{\"signatureInkColor\":\"black\"}"), session)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.signatureInkColor").value("black"));
+
+        var background = new MockMultipartFile("file", "background.png", "image/png", new byte[] {4, 5, 6});
+        perform(multipart(boardPath() + "/background").file(background), session).andExpect(status().isOk());
+        assertRejectedUnchanged("invalid-title-white", authenticated(patch(boardPath())
+                .contentType(APPLICATION_JSON)
+                .content("{\"title\":\"   \",\"signatureInkColor\":\"white\"}"), session),
+                400, "BOARD_TITLE_INVALID");
+        assertRejectedUnchanged("valid-title-invalid-color", authenticated(patch(boardPath())
+                .contentType(APPLICATION_JSON)
+                .content("{\"title\":\"must not persist\",\"signatureInkColor\":\"WHITE\"}"), session),
+                400, "SIGNATURE_INK_COLOR_INVALID");
+
+        var roster = perform(post(rosterPath()).contentType(APPLICATION_JSON).content(identity("A")), session)
+                .andExpect(status().isOk()).andReturn();
+        UUID slotId = UUID.fromString(json(roster, "/slot/id"));
+        perform(patch(boardPath() + "/slots/" + slotId).contentType(APPLICATION_JSON)
+                .content(slotBody()), session).andExpect(status().isOk());
+        perform(post(boardPath() + "/open"), session).andExpect(status().isOk());
+        assertRejectedUnchanged("open-same-black", authenticated(patch(boardPath())
+                .contentType(APPLICATION_JSON).content("{\"signatureInkColor\":\"black\"}"), session),
+                409, "BOARD_NOT_DRAFT");
+        perform(post(boardPath() + "/close"), session).andExpect(status().isOk());
+        assertRejectedUnchanged("closed-color", authenticated(patch(boardPath())
+                .contentType(APPLICATION_JSON).content("{\"signatureInkColor\":\"white\"}"), session),
+                409, "BOARD_NOT_DRAFT");
+    }
+
+    @Test
     void canonicalGraphDetectsIdentityMutationWithoutCountChange() throws Exception {
         var session = session(OWNER, NOW);
         perform(post("/api/v1/admin/boards").contentType(APPLICATION_JSON)
@@ -271,7 +421,9 @@ final class BoardAdminApiStatefulTest {
             throws Exception {
         String after = graph.canonicalGraph();
         assertThat(after).isEqualTo(before);
-        assertThat(result.getResponse().getContentAsString()).doesNotContain(protectedValues);
+        if (protectedValues.length > 0) {
+            assertThat(result.getResponse().getContentAsString()).doesNotContain(protectedValues);
+        }
         System.out.println("QA_REJECT " + scenario + " beforeDigest="
                 + StatefulBoardApiGraph.digestCanonical(before) + " afterDigest="
                 + StatefulBoardApiGraph.digestCanonical(after));
@@ -282,6 +434,31 @@ final class BoardAdminApiStatefulTest {
         return mvc.perform(authenticated(request, session))
                 .andExpect(header().string("Cache-Control", "no-store, private"))
                 .andExpect(header().string("Referrer-Policy", "no-referrer"));
+    }
+
+    private void openCompleteBoard(MockHttpSession session) throws Exception {
+        perform(post("/api/v1/admin/boards").contentType(APPLICATION_JSON)
+                .content("{\"title\":\"precedence board\"}"), session).andExpect(status().isOk());
+        var roster = perform(post(rosterPath()).contentType(APPLICATION_JSON).content(identity("A")), session)
+                .andExpect(status().isOk()).andReturn();
+        UUID slotId = UUID.fromString(json(roster, "/slot/id"));
+        perform(patch(boardPath() + "/slots/" + slotId).contentType(APPLICATION_JSON)
+                .content(slotBody()), session).andExpect(status().isOk());
+        perform(post(boardPath() + "/open"), session).andExpect(status().isOk());
+    }
+
+    private void assertMixedTitleColorRejectedInCurrentState(MockHttpSession session, String state)
+            throws Exception {
+        for (String body : new String[] {
+                "{\"title\":\"   \",\"signatureInkColor\":\"white\"}",
+                "{\"title\":null,\"signatureInkColor\":\"white\"}",
+                "{\"title\":123,\"signatureInkColor\":\"white\"}"}) {
+            assertRejectedUnchanged("invalid-title-color-" + state + "-" + body,
+                    authenticated(patch(boardPath()).contentType(APPLICATION_JSON).content(body), session),
+                    400, "BOARD_TITLE_INVALID");
+        }
+        System.out.println("QA_PRECEDENCE state=" + state
+                + " titles=whitespace,null,numeric code=BOARD_TITLE_INVALID mutations=0");
     }
 
     private static MockHttpServletRequestBuilder authenticated(
