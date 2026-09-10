@@ -2,6 +2,8 @@
 
 이미 Docker Compose로 배포된 서버에서 최신 `main`을 받아 재빌드·배포하는 절차다. 최초 배포와 `.env` 구성은 [빠른 배포 가이드](DEPLOY_GUIDE.md)를 따른다.
 
+`V6__board_signature_ink_color.sql`을 처음 적용하는 릴리스는 아래 일반 절차를 사용하지 않는다. 이전 바이너리와 V6 데이터베이스가 섞이지 않도록 [보드 서명색 단일 릴리스·복구 절차](BOARD_INK_COLOR_ROLLOUT.md)의 트래픽 중지, 같은 시점 백업·복구 연습, 스키마 가드, 동시 frontend/backend 재시작, 새 브라우저 스모크 순서를 따른다.
+
 `infra/compose/.env`와 `/srv/narae-signing`의 PostgreSQL·MinIO 데이터, `master.key`는 유지한다. `docker compose down -v`나 master key 재생성은 업데이트 절차에 포함하지 않는다.
 
 ## 개별 빌드 명령

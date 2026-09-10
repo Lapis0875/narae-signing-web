@@ -29,6 +29,8 @@ CI uses `npm exec biome lint .` for semantic linting. `npm run lint` also checks
 
 `frontend` is a Vite React TypeScript shell. `backend` is a Spring Boot modular-monolith root under `com.naraesigning`. Product behavior is intentionally added by later plan todos.
 
+보드 서명색 API 계약, V6 스키마 전환, 단일 릴리스와 같은 시점 복구 절차는 [보드 서명색 단일 릴리스·복구 절차](docs/BOARD_INK_COLOR_ROLLOUT.md)를 따른다.
+
 ## Verification
 
 Run the command groups above from a clean managed worktree.
