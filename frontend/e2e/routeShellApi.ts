@@ -33,6 +33,7 @@ const boardDetail = {
   createdAt: "2026-08-23T00:00:00.000Z",
   id: boardId,
   shareLinkVersion: 1,
+  signatureInkColor: "black",
   status: "설정 중",
   title: "보드 편집",
   updatedAt: "2026-08-23T00:00:00.000Z",
@@ -99,9 +100,14 @@ export async function mockApi(
         body: JSON.stringify(signingSessionResponse),
       });
     }
-    if (pathname === `${signingSessionPath}/draft` && request.method() === "PUT") {
+    if (
+      pathname === `${signingSessionPath}/draft` &&
+      request.method() === "PUT"
+    ) {
       expect(request.postDataJSON()).toEqual({ strokes: [], version: 1 });
-      expect(await request.headerValue("x-xsrf-token")).toBe("route-fixture-csrf");
+      expect(await request.headerValue("x-xsrf-token")).toBe(
+        "route-fixture-csrf",
+      );
       probe.signerRequests.push(`${request.method()} ${pathname}`);
       return route.fulfill({
         contentType: "application/json",
@@ -158,6 +164,7 @@ export async function mockApi(
           boardId,
           canvasHeight: boardDetail.canvasHeight,
           canvasWidth: boardDetail.canvasWidth,
+          signatureInkColor: "black",
           slots: [],
         }),
       });

@@ -13,7 +13,11 @@ const routes = [
   { auth: "signed-in", path: "/boards", title: "보드 목록" },
   { auth: "signed-in", path: "/boards/new", title: "새 보드" },
   { auth: "signed-in", path: `/boards/${boardId}/edit`, title: "보드 편집" },
-  { auth: "signed-in", path: `/boards/${boardId}/full`, title: "보드 전체보기" },
+  {
+    auth: "signed-in",
+    path: `/boards/${boardId}/full`,
+    title: "보드 전체보기",
+  },
   { auth: "public", path: "/sign/share-1", title: "서명하기" },
 ] as const;
 
@@ -110,12 +114,16 @@ test.describe("@route-shell", () => {
         page.getByRole("heading", { level: 1, name: route.title }),
       ).toBeVisible();
       if (route.auth === "public") {
-        await page.getByLabel("소속사 (선택)").fill(signerIdentity.organization);
+        await page
+          .getByLabel("소속사 (선택)")
+          .fill(signerIdentity.organization);
         await page.getByLabel("직책 (선택)").fill(signerIdentity.job);
         await page.getByLabel("이름").fill(signerIdentity.name);
         await page.getByRole("button", { name: "정보 확인" }).click();
         await expect(page.getByTestId("signer-canvas")).toBeVisible();
-        await expect(page.locator(".public-signer__proportional-pad")).toBeVisible();
+        await expect(
+          page.locator(".public-signer__proportional-pad"),
+        ).toBeVisible();
         await page.waitForLoadState("networkidle");
         await page.evaluate(async () => {
           await new Promise<void>((resolve) =>
