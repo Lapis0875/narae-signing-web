@@ -236,9 +236,13 @@ test("@admin-editor edits the authoritative canvas and recovers failed mutations
     rejectedPatchGate = new Promise<void>((resolve) => {
       releaseRejectedPatch = resolve;
     });
-  const successfulPatchGate = new Promise<void>((resolve) => {
-    releaseSuccessfulPatch = resolve;
-  });
+  let successfulPatchGate = Promise.resolve();
+  const holdSuccessfulPatch = () => {
+    holdNextSuccessfulPatch = true;
+    successfulPatchGate = new Promise<void>((resolve) => {
+      releaseSuccessfulPatch = resolve;
+    });
+  };
   const apiUrl = `${origin}/api/v1/admin/boards/${boardId}`;
   const expectedConsoleErrors = new Set([
     `Failed to load resource: the server responded with a status of 404 (Not Found) @ ${apiUrl}/events`,
@@ -664,7 +668,7 @@ test("@admin-editor edits the authoritative canvas and recovers failed mutations
 
   rejectNextPatch = true;
   holdNextPatch = true;
-  holdNextSuccessfulPatch = true;
+  holdSuccessfulPatch();
   await moveButton.press("ArrowRight");
   await moveButton.press("ArrowRight");
   await moveButton.press("ArrowLeft");
@@ -685,6 +689,11 @@ test("@admin-editor edits the authoritative canvas and recovers failed mutations
   await expect(page.getByText(/서버 배치와 충돌/u)).toBeVisible();
   await expect(page.getByLabel("자동 저장 상태")).toHaveText("저장 실패");
   await captureState(page, "authoritative-409-recovery", { anchor: canvas });
+  releaseSuccessfulPatch();
+  await expect(page.getByLabel("자동 저장 상태")).toHaveText("저장 실패");
+  holdSuccessfulPatch();
+  await moveButton.press("ArrowRight");
+  await expect.poll(() => patchCount).toBe(8);
   releaseSuccessfulPatch();
   await expect(page.getByLabel("자동 저장 상태")).toHaveText("저장됨");
 
