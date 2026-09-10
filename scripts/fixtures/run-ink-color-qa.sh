@@ -64,7 +64,6 @@ remove_temporary_root() {
             local find_status=0
             wait "$root_executor_pid" || find_status=$?
             active_cleanup_child_pid=""
-            root_executor_pid=""
             [[ $find_status -eq 0 ]]
             ;;
         *) return 1 ;;
