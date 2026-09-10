@@ -123,7 +123,7 @@ export async function adminJson(
   const csrfHeader =
     method === "GET"
       ? undefined
-      : (await page.context().cookies([page.url()])).find(
+      : (await page.context().cookies()).find(
           (cookie) => cookie.name === "XSRF-TOKEN",
         )?.value;
   if (method !== "GET" && csrfHeader === undefined)
