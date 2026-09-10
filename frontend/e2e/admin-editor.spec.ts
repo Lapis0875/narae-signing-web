@@ -215,7 +215,8 @@ test("@admin-editor edits the authoritative canvas and recovers failed mutations
     backgroundCount = 0,
     backgroundGets = 0,
     latestPatchFractionDigits = 0,
-    latestPatchX = 0;
+    latestPatchX = 0,
+    preacceptedPatchAuthoritativeX: number | null = null;
   let latestPatchBody: unknown = null,
     latestPatchHasBackground: boolean | null = null;
   const latestPatchBySlot = new Map<
@@ -367,6 +368,9 @@ test("@admin-editor edits the authoritative canvas and recovers failed mutations
         holdNextSuccessfulPatch = false;
         await successfulPatchGate;
       }
+      const authoritativeX =
+        patchCount === 7 ? (body.x === 0 ? 0.001 : body.x - 0.001) : body.x;
+      if (patchCount === 7) preacceptedPatchAuthoritativeX = authoritativeX;
       roster = roster.map((entry) =>
         entry.slot.id === slotId
           ? {
@@ -377,7 +381,7 @@ test("@admin-editor edits the authoritative canvas and recovers failed mutations
                 placementStatus: "PLACED",
                 revision: entry.slot.revision + 1,
                 width: body.width,
-                x: body.x,
+                x: authoritativeX,
                 y: body.y,
               },
             }
@@ -689,7 +693,23 @@ test("@admin-editor edits the authoritative canvas and recovers failed mutations
   await expect(page.getByText(/서버 배치와 충돌/u)).toBeVisible();
   await expect(page.getByLabel("자동 저장 상태")).toHaveText("저장 실패");
   await captureState(page, "authoritative-409-recovery", { anchor: canvas });
+  const preacceptedPatchResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/slots/${slotOne}`) &&
+      response.request().method() === "PATCH" &&
+      response.status() === 200,
+  );
   releaseSuccessfulPatch();
+  await preacceptedPatchResponse;
+  if (preacceptedPatchAuthoritativeX === null)
+    throw new Error("Preaccepted PATCH authoritative geometry unavailable");
+  await expect
+    .poll(async () =>
+      Number.parseFloat(
+        await movingSlot.evaluate((element) => element.style.left),
+      ),
+    )
+    .toBeCloseTo(preacceptedPatchAuthoritativeX * 100);
   await expect(page.getByLabel("자동 저장 상태")).toHaveText("저장 실패");
   holdSuccessfulPatch();
   await moveButton.press("ArrowRight");
