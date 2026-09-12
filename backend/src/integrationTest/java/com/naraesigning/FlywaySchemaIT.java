@@ -24,7 +24,7 @@ class FlywaySchemaIT {
 
     @Container
     static final GenericContainer<?> MINIO = new GenericContainer<>(
-            DockerImageName.parse("minio/minio:RELEASE.2025-04-22T22-12-26Z"))
+            DockerImageName.parse("quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z"))
             .withCommand("server", "/data")
             .withEnv("MINIO_ROOT_USER", "synthetic-test-user")
             .withEnv("MINIO_ROOT_PASSWORD", "synthetic-test-password")

@@ -1901,7 +1901,7 @@ containers=${project}-{frontend,backend,postgres,minio,minio-init}-1
 networks=${project}_{ingress,private}
 volumes=none (task-local bind directories only)
 image_tags=${project}-frontend,${project}-backend
-reused_images=postgres:17.6-alpine,minio/minio,minio/mc
+reused_images=postgres:17.6-alpine,quay.io/minio/minio,quay.io/minio/mc
 port=$frontend_port
 temporary_root=$temporary_root
 credential_file=$credential_file (mode 600)
@@ -2115,7 +2115,7 @@ services:
       timeout: 2s
       retries: 30
   minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     command: server /data
     environment:
       MINIO_ROOT_USER: \${MINIO_ROOT_USER}
@@ -2128,7 +2128,7 @@ services:
       timeout: 2s
       retries: 30
   minio-client:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
     entrypoint: ["/bin/sh", "-ec"]
     command: ["while :; do sleep 3600; done"]
     environment:
