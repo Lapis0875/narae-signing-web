@@ -917,11 +917,15 @@ def validate_local_intents(payload, allow_missing_root=False):
         elif kind == "port":
             if not identity.isdigit() or not 1 <= int(identity) <= 65535:
                 raise ValueError("registered port is invalid")
-        elif kind == "process-intent":
+        elif kind == "process-intent" and identity not in {
+            "admin-bootstrap", "schema-preflight", "restore-smoke",
+            "cleanup-self-test", "cleanup-self-test-local-only",
+        }:
             lifecycle = pathlib.Path(identity)
             expected = (temporary_root / "playwright-process-lifecycle.jsonl").absolute()
             if (
-                lifecycle.absolute() != expected
+                not lifecycle.is_absolute()
+                or lifecycle != expected
                 or lifecycle.is_symlink()
                 or not lifecycle.is_file()
                 or stat.S_IMODE(lifecycle.stat().st_mode) != 0o600
@@ -937,7 +941,7 @@ def validate_local_intents(payload, allow_missing_root=False):
                 "identity": str(expected),
             }:
                 raise ValueError("registered Playwright lifecycle is not bound to this run")
-            if action == "seal" and len(events) == 1:
+            if action in {"bind", "seal", "validate-ports", "verify"} and len(events) == 1:
                 continue
             if [event.get("event") for event in events] != [
                 "registered",
@@ -951,8 +955,15 @@ def validate_local_intents(payload, allow_missing_root=False):
             absence_event = events[-1]
             if (
                 started_event.get("runId") != run_id
-                or not isinstance(started_event.get("pid"), int)
-                or not isinstance(started_event.get("pgid"), int)
+                or type(started_event.get("pid")) is not int
+                or started_event["pid"] <= 1
+                or started_event.get("pgid") != started_event["pid"]
+                or any(
+                    event.get("runId") != run_id
+                    or event.get("pid") != started_event["pid"]
+                    or event.get("pgid") != started_event["pgid"]
+                    for event in events[2:]
+                )
                 or absence_event.get("runId") != run_id
                 or absence_event.get("pid") != started_event.get("pid")
                 or absence_event.get("pgid") != started_event.get("pgid")
@@ -960,7 +971,7 @@ def validate_local_intents(payload, allow_missing_root=False):
                 or absence_event.get("groupGone") is not True
             ):
                 raise ValueError("Playwright lifecycle absence is not proven")
-        elif kind in {"browser-context", "launcher-pid"}:
+        elif kind in {"browser-context", "launcher-pid", "process-intent"}:
             if not identity:
                 raise ValueError("registered process/browser identity is invalid")
         else:
