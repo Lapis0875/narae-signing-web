@@ -230,7 +230,24 @@ try:
     demo_record = json.loads((recovery_evidence / "happy/recovery-registration.json").read_text())
     if rc != 1 or teardown.get("outcome") != "retained" or teardown.get("rootMutationCount") != 0 or demo_record.get("sealed") is not True or demo_record.get("actions") != {"dockerMutationCount": 0, "rootMutationCount": 0}:
         raise RuntimeError("mounted demo did not retain exact fixture after successful zero-action registration")
-    result["demo"] = {"innerExit": rc, "sealed": True, "registrationOnly": True, "rootMutationCount": 0, "retainedUntilDetach": fixture.exists()}
+    def refused_cases(filename):
+        rows = [line.split("\t") for line in (recovery_evidence / filename).read_text().splitlines()]
+        if any(len(row) != 3 or row[1] != "REFUSED" for row in rows) or len({row[0] for row in rows}) != len(rows):
+            raise RuntimeError("incomplete or invalid recovery refusal evidence")
+        return {row[0] for row in rows}
+    expected_refusals = {"candidate", "owner-only-candidate", "project-only-candidate", "query-error", "query-hung", "interruption", "interruption-repeat", "malformed", "stale-digest", "duplicate-intent", "live-launcher", "identity-carrier", "marker-mismatch", "unsafe-mode", "registry-mode", "descendant-symlink", "unsafe-type", "metadata-race", "wrong-path", "historical-profile", "unsafe-output-parent"}
+    if refused_cases("refusal-matrix.tsv") != expected_refusals or refused_cases("teardown-identity.tsv") != {"marker-mismatch", "registry-digest-mismatch", "descendant-mode-mismatch", "symlink-replacement", "path-replacement"}:
+        raise RuntimeError("recovery demo did not finish every required refusal")
+    for boundary in ("before", "after"):
+        observation = json.loads((recovery_evidence / ("actual-term-" + boundary) / "term-observation.json").read_text())
+        if observation != {"signal": "TERM", "stage": boundary, "childExitNonzero": True, "childAlive": False, "shellAlive": False}:
+            raise RuntimeError("recovery demo did not prove TERM completion")
+    demo_source = recovery_evidence / "recovery-build-failure/launcher/ownership-registry.json"
+    if hashlib.sha256(demo_source.read_bytes()).hexdigest() != demo_record["sourceRegistry"]["sha256"] or (recovery_evidence / "recovery-build-failure/fake-docker-mutations.log").read_bytes():
+        raise RuntimeError("recovery demo changed source or performed Docker mutation")
+    if int((recovery_evidence / "duplicate.exit-code").read_text()) == 0 or demo_record["root"]["inode"] != fixture.stat().st_ino:
+        raise RuntimeError("recovery demo lost duplicate refusal or original root identity")
+    result["demo"] = {"innerExit": rc, "sealed": True, "registrationOnly": True, "rootMutationCount": 0, "retainedUntilDetach": fixture.exists(), "refusalCaseCount": len(expected_refusals), "teardownCaseCount": 5, "actualTermCaseCount": 2, "allRequiredCasesCompleted": True}
 except BaseException as error:
     result["verdict"] = "BLOCKED"
     result["error"] = str(error)

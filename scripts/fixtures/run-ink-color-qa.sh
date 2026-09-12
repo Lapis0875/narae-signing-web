@@ -347,11 +347,15 @@ try:
             deadline = time.monotonic() + 30
             while not cancelled_signal and time.monotonic() < deadline:
                 time.sleep(0.01)
-        check_cancelled()
-        # Cancellation acknowledged here prevents publication. A signal concurrent
-        # with link may leave the complete sealed record; link and signal delivery
-        # are not one atomic operation. Never delete an already published record.
-        os.link(temporary, record, follow_symlinks=False)
+        # Block delivery across the cancellation decision and atomic publication.
+        # A concurrent signal is acknowledged after this interval and may retain
+        # a complete sealed record; wall-clock arrival does not order the commit.
+        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+        try:
+            check_cancelled()
+            os.link(temporary, record, follow_symlinks=False)
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
         directory_fd = os.open(record.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
             os.fsync(directory_fd)

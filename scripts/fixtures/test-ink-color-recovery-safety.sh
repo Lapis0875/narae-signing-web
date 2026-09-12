@@ -105,6 +105,8 @@ def install_signal(signum, handler):
         global signal_count
         handler(received, frame)
         signal_count += 1
+        with (control / "signal-events.jsonl").open("a") as stream:
+            stream.write(json.dumps({"sequence": signal_count, "signal": received, "publishedAtAcknowledgment": pathlib.Path(sys.argv[-1]).exists()}) + "\n")
         (control / "signal-count").write_text(str(signal_count))
     return real_signal(signum, observed_handler)
 signal.signal = install_signal
@@ -338,9 +340,11 @@ try:
             unchanged = snapshot(source) == source_before and all(snapshot(root / key) == value for key, value in original_manifest.items())
             success_prose = "PASS:" in (case / "stdout").read_text()
             acknowledged = int((case / "signal-count").read_text()) if (case / "signal-count").exists() else 0
+            acknowledgments = [json.loads(line) for line in (case / "signal-events.jsonl").read_text().splitlines()] if (case / "signal-events.jsonl").exists() else []
             repeated_ok = acknowledged == 3 if stage in {"repeated-before", "repeated-after", "ordinary-error-finalizer"} else acknowledged == 1
-            passed = bool(observed and rc != 0 and process.pid == target_pid and not orphan and not partials and record_ok and unchanged and not success_prose and repeated_ok)
-            results.append({"case": stage, "pass": passed, "exitCode": rc, "launcherPid": process.pid, "registrationPid": target_pid, "pidContinuous": process.pid == target_pid, "orphanObserved": orphan, "signalCount": len(sent), "acknowledgedSignals": acknowledged, "temporaryResidue": partials, "recordExists": record.exists(), "completeSealedRecord": complete, "sourceAndRootUnchanged": unchanged, "successProse": success_prose})
+            commit_ack_ok = all(item["publishedAtAcknowledgment"] for item in acknowledgments) if stage == "concurrent-commit" else True
+            passed = bool(observed and rc != 0 and process.pid == target_pid and not orphan and not partials and record_ok and unchanged and not success_prose and repeated_ok and commit_ack_ok)
+            results.append({"case": stage, "pass": passed, "exitCode": rc, "launcherPid": process.pid, "registrationPid": target_pid, "pidContinuous": process.pid == target_pid, "orphanObserved": orphan, "signalCount": len(sent), "acknowledgedSignals": acknowledged, "signalAcknowledgments": acknowledgments, "temporaryResidue": partials, "recordExists": record.exists(), "completeSealedRecord": complete, "sourceAndRootUnchanged": unchanged, "successProse": success_prose})
             event("child-joined", stage=stage, pid=process.pid, exitCode=rc, registrationPid=target_pid, registrationAlive=bool(target_pid and alive(target_pid)))
 finally:
     (evidence / "results.json").write_text(json.dumps({"baseRevision": revision, "sourceHashes": {str(path.relative_to(worktree)): hashlib.sha256(path.read_bytes()).hexdigest() for path in (launcher, guardrail)}, "cases": results}, indent=2, sort_keys=True) + "\n")
