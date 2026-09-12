@@ -17,6 +17,11 @@ if [ "$#" -ne 1 ]; then
     exit 64
 fi
 
+if [ -z "${PGSERVICE:-}" ]; then
+    verdict INDETERMINATE connection >&2
+    exit 69
+fi
+
 if ! command -v psql >/dev/null 2>&1; then
     verdict INDETERMINATE connection >&2
     exit 69

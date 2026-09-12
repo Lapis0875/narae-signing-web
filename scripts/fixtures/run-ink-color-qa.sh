@@ -1662,6 +1662,80 @@ guard_in_container() {
         postgres sh /repo/scripts/release/check-ink-color-schema.sh "$target"
 }
 
+expect_local_selector_guard() {
+    local scenario=$1
+    local service=$2
+    local expected_status=$3
+    local expected_output=$4
+    local expected_calls=$5
+    local service_file="$temporary_root/selector.pg_service.conf"
+    local fake_bin="$temporary_root/fake-psql-bin"
+    local sentinel="$temporary_root/$scenario.psql.calls"
+    local output="$evidence_dir/$scenario.txt"
+    local result=0
+    : > "$sentinel"
+    if [[ "$service" == unset ]]; then
+        env -u PGSERVICE PGSERVICEFILE="$service_file" INK_QA_PSQL_SENTINEL="$sentinel" \
+            PATH="$fake_bin:$PATH" sh "$root/scripts/release/check-ink-color-schema.sh" board-ink \
+            > "$output" 2>&1 || result=$?
+    else
+        PGSERVICE="$service" PGSERVICEFILE="$service_file" INK_QA_PSQL_SENTINEL="$sentinel" \
+            PATH="$fake_bin:$PATH" sh "$root/scripts/release/check-ink-color-schema.sh" board-ink \
+            > "$output" 2>&1 || result=$?
+    fi
+    local calls
+    calls=$(wc -l < "$sentinel" | tr -d ' ')
+    if [[ $result -ne $expected_status || "$(cat "$output")" != "$expected_output" || $calls -ne $expected_calls ]]; then
+        printf 'FAIL: %s returned status=%s output=%q psql_calls=%s\n' \
+            "$scenario" "$result" "$(cat "$output")" "$calls" >&2
+        schema_failures=$((schema_failures + 1))
+    fi
+    printf '%s status=%s psql_calls=%s\n' "$scenario" "$result" "$calls" \
+        >> "$evidence_dir/schema-selector-summary.txt"
+}
+
+run_schema_selector_contract_tests() {
+    local service_file="$temporary_root/selector.pg_service.conf"
+    local fake_bin="$temporary_root/fake-psql-bin"
+    mkdir -m 700 "$fake_bin"
+    printf '[approved]\nhost=synthetic.invalid\ndbname=synthetic\nuser=synthetic\n' > "$service_file"
+    chmod 600 "$service_file"
+    cat > "$fake_bin/psql" <<'EOF'
+#!/bin/sh
+printf 'called\n' >> "${INK_QA_PSQL_SENTINEL:?}"
+[ "${PGSERVICE:-}" = approved ] || exit 2
+printf '%s\n' 't|t|f|t|t|t|t'
+EOF
+    chmod 700 "$fake_bin/psql"
+    if [[ -n "$registry_file" ]]; then
+        registry_declare local credential-file "$service_file"
+        registry_declare local process-intent "$fake_bin/psql"
+    fi
+    : > "$evidence_dir/schema-selector-summary.txt"
+    expect_local_selector_guard selector-missing unset 69 'INDETERMINATE: connection' 0
+    expect_local_selector_guard selector-empty '' 69 'INDETERMINATE: connection' 0
+    expect_local_selector_guard selector-valid approved 0 'COMPATIBLE: board-ink' 1
+    expect_local_selector_guard selector-wrong wrong 69 'INDETERMINATE: connection' 1
+}
+
+run_local_schema_selector_tests() {
+    local temporary_base=/tmp
+    [[ -d /private/tmp ]] && temporary_base=/private/tmp
+    run_id=$(openssl rand -hex 32)
+    temporary_root=$(mktemp -d "$temporary_base/narae-ink-color-selector.XXXXXXXX")
+    printf '%s\n' "$run_id" > "$temporary_root/.ink-color-selector-owned"
+    chmod 600 "$temporary_root/.ink-color-selector-owned"
+    trap 'result=$?; trap - EXIT; if [[ -d "$temporary_root" && "$(cat "$temporary_root/.ink-color-selector-owned" 2>/dev/null)" == "$run_id" ]]; then find "$temporary_root" -depth -delete; fi; exit "$result"' EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    run_schema_selector_contract_tests
+    [[ $schema_failures -eq 0 ]] || fail "$schema_failures schema selector expectations failed"
+    printf '{"applicable":true,"outcome":"passed","scenarios":4}\n' \
+        > "$evidence_dir/schema-selector-result.json"
+    printf 'PASS: 4 schema selector scenarios\n'
+}
+
 expect_guard() {
     local scenario=$1
     local expected=$2
@@ -1698,6 +1772,8 @@ expect_guard() {
 
 run_schema_preflight_tests() {
     create_run
+    run_schema_selector_contract_tests
+    [[ $schema_failures -eq 0 ]] || fail "$schema_failures schema selector expectations failed"
     export POSTGRES_USER="inkqa_$(openssl rand -hex 4)"
     export POSTGRES_PASSWORD="$(openssl rand -hex 24)"
     cat > "$compose_file" <<EOF
@@ -2308,7 +2384,7 @@ PY
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --schema-preflight-tests|--smoke|--restore-smoke|--full|--public-baseline|--cleanup-self-test|--recovery-registration)
+        --schema-selector-tests|--schema-preflight-tests|--smoke|--restore-smoke|--full|--public-baseline|--cleanup-self-test|--recovery-registration)
             [[ -z "$mode" ]] || fail "choose exactly one mode"
             mode=$1
             shift
@@ -2360,12 +2436,19 @@ else
         || fail "recovery arguments require --recovery-registration"
     evidence_dir=$(mkdir -p "$evidence_dir" && CDPATH= cd -- "$evidence_dir" && pwd)
 fi
-for command in docker openssl python3; do
+required_commands=(openssl)
+if [[ "$mode" != --schema-selector-tests ]]; then
+    required_commands+=(docker python3)
+fi
+for command in "${required_commands[@]}"; do
     command -v "$command" >/dev/null 2>&1 || fail "required command not found: $command"
 done
-run_bounded 30 docker info >/dev/null 2>&1 || fail "Docker engine is unavailable"
+if [[ "$mode" != --schema-selector-tests ]]; then
+    run_bounded 30 docker info >/dev/null 2>&1 || fail "Docker engine is unavailable"
+fi
 
 case "$mode" in
+    --schema-selector-tests) run_local_schema_selector_tests ;;
     --schema-preflight-tests) run_schema_preflight_tests ;;
     --smoke) run_browser_suite smoke ;;
     --full) run_browser_suite full ;;
