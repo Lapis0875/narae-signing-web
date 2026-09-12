@@ -135,7 +135,8 @@ final class BoardAdminController {
     }
 
     private static BoardPatch boardPatch(JsonNode body) {
-        if (!body.isObject() || body.isEmpty()) throw new BoardPatchInputException("BOARD_PATCH_EMPTY");
+        if (!body.isObject()) throw new IllegalArgumentException("invalid board patch body");
+        if (body.isEmpty()) throw new BoardPatchInputException("BOARD_PATCH_EMPTY");
         for (var field : body.properties()) {
             if (!Set.of("title", "signatureInkColor").contains(field.getKey())) {
                 throw new IllegalArgumentException("unknown board patch field");

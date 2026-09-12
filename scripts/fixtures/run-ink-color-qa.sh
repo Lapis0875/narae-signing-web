@@ -1679,8 +1679,16 @@ expect_guard() {
             schema_failures=$((schema_failures + 1))
         fi
     else
-        if [[ $result -eq 0 ]]; then
-            printf 'FAIL: %s unexpectedly passed\n' "$scenario" >&2
+        local expected_status=1 expected_verdict="INCOMPATIBLE: $target"
+        if [[ "$service" == broken ]]; then
+            expected_status=69
+            expected_verdict="INDETERMINATE: connection"
+        elif [[ "$target" == invalid ]]; then
+            expected_status=64
+            expected_verdict="INVALID: target"
+        fi
+        if [[ $result -ne $expected_status || "$(cat "$output")" != "$expected_verdict" ]]; then
+            printf 'FAIL: %s returned an unexpected status or verdict\n' "$scenario" >&2
             schema_failures=$((schema_failures + 1))
         fi
     fi
@@ -1715,7 +1723,7 @@ EOF
     register_docker_intents network "${project}_default"
     registry_declare local process-intent schema-preflight
     local service_file
-    for service_file in legacy new mixed uppercase extra broken; do
+    for service_file in legacy new mixed uppercase extra notin tautology reversed missing wrongcolumn nocheck broken; do
         registry_declare local credential-file "$temporary_root/$service_file.pg_service.conf"
     done
     write_service_file legacy legacy_catalog
@@ -1723,6 +1731,9 @@ EOF
     write_service_file mixed mixed_catalog
     write_service_file uppercase uppercase_catalog
     write_service_file extra extra_catalog
+    for service_file in notin tautology reversed missing wrongcolumn nocheck; do
+        write_service_file "$service_file" "${service_file}_catalog"
+    done
     umask 077
     printf '[broken]\nhost=127.0.0.1\nport=1\ndbname=postgres\nuser=nobody\npassword=synthetic\nconnect_timeout=1\n' \
         > "$temporary_root/broken.pg_service.conf"
@@ -1735,13 +1746,14 @@ volume=none
 image=postgres:17.6-alpine (reused, not owned)
 port=none
 temporary_root=$temporary_root
-credential_files=legacy/new/mixed/uppercase/extra/broken pg_service.conf (mode 600)
+credential_files=legacy/new/mixed/uppercase/extra/notin/tautology/reversed/missing/wrongcolumn/nocheck/broken pg_service.conf (mode 600)
 server_pid=none
 browser_context=none
 EOF
     registered_compose_up 180 false
 
-    for database in legacy_catalog new_catalog mixed_catalog uppercase_catalog extra_catalog; do
+    for database in legacy_catalog new_catalog mixed_catalog uppercase_catalog extra_catalog \
+            notin_catalog tautology_catalog reversed_catalog missing_catalog wrongcolumn_catalog nocheck_catalog; do
         run_bounded 30 docker compose -p "$project" -f "$compose_file" exec -T postgres \
             psql -X -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres \
             -c "CREATE DATABASE $database" >/dev/null
@@ -1752,10 +1764,17 @@ EOF
         run_bounded 30 docker compose -p "$project" -f "$compose_file" exec -T postgres \
             psql -X -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d legacy_catalog
     printf '%s\n' \
-        "CREATE TABLE board (id bigint PRIMARY KEY, signature_ink_color varchar(5) NOT NULL DEFAULT 'black' CHECK (signature_ink_color IN ('black', 'white')));" \
-        'CREATE TABLE signature_slot (id bigint PRIMARY KEY);' |
+        'CREATE TABLE board (id bigint PRIMARY KEY);' \
+        'CREATE TABLE signature_slot (id bigint PRIMARY KEY, background_color varchar(32));' |
         run_bounded 30 docker compose -p "$project" -f "$compose_file" exec -T postgres \
             psql -X -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d new_catalog
+    run_bounded 30 docker compose -p "$project" -f "$compose_file" exec -T postgres \
+        psql -X -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d new_catalog \
+        -f /repo/backend/src/main/resources/db/migration/V6__board_signature_ink_color.sql
+    run_bounded 30 docker compose -p "$project" -f "$compose_file" exec -T postgres \
+        psql -X -A -t -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d new_catalog \
+        -c "SELECT pg_get_expr(conbin, conrelid) FROM pg_constraint WHERE conname = 'board_signature_ink_color_check'" \
+        > "$evidence_dir/v6-check-expression.txt"
     printf '%s\n' \
         "CREATE TABLE board (id bigint PRIMARY KEY, signature_ink_color varchar(5) NOT NULL DEFAULT 'black' CHECK (signature_ink_color IN ('black', 'white')));" \
         'CREATE TABLE signature_slot (id bigint PRIMARY KEY, background_color varchar(32));' |
@@ -1772,6 +1791,23 @@ EOF
         run_bounded 30 docker compose -p "$project" -f "$compose_file" exec -T postgres \
             psql -X -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d extra_catalog
 
+    local check_expression
+    for service_file in notin tautology reversed missing wrongcolumn nocheck; do
+        case "$service_file" in
+            notin) check_expression="CHECK (signature_ink_color NOT IN ('black', 'white'))" ;;
+            tautology) check_expression="CHECK (signature_ink_color IN ('black', 'white') OR true)" ;;
+            reversed) check_expression="CHECK ('black' IN (signature_ink_color, 'white'))" ;;
+            missing) check_expression="CHECK (signature_ink_color IN ('black'))" ;;
+            wrongcolumn) check_expression="CHECK (other_ink IN ('black', 'white') AND signature_ink_color IS NOT NULL)" ;;
+            nocheck) check_expression="" ;;
+        esac
+        printf '%s\n' \
+            "CREATE TABLE board (id bigint PRIMARY KEY, signature_ink_color varchar(5) NOT NULL DEFAULT 'black', other_ink varchar(5) $check_expression);" \
+            'CREATE TABLE signature_slot (id bigint PRIMARY KEY);' |
+            run_bounded 30 docker compose -p "$project" -f "$compose_file" exec -T postgres \
+                psql -X -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "${service_file}_catalog"
+    done
+
     : > "$evidence_dir/schema-summary.txt"
     expect_guard legacy-success pass legacy legacy
     expect_guard legacy-repeat pass legacy legacy
@@ -1780,12 +1816,15 @@ EOF
     expect_guard mixed-board-ink-failure fail mixed board-ink
     expect_guard uppercase-board-ink-failure fail uppercase board-ink
     expect_guard extra-literal-board-ink-failure fail extra board-ink
+    for service_file in notin tautology reversed missing wrongcolumn nocheck; do
+        expect_guard "$service_file-board-ink-failure" fail "$service_file" board-ink
+    done
     expect_guard connection-failure fail broken legacy
     expect_guard invalid-target-failure fail legacy invalid
     [[ $schema_failures -eq 0 ]] || fail "$schema_failures schema preflight expectations failed"
-    printf '{"applicable":true,"catalogs":["legacy","new","mixed","uppercase","extra"],"outcome":"passed","scenarios":9}\n' \
+    printf '{"applicable":true,"catalogs":["legacy","new","mixed","uppercase","extra","notin","tautology","reversed","missing","wrongcolumn","nocheck"],"outcome":"passed","scenarios":15}\n' \
         > "$evidence_dir/schema-result.json"
-    printf 'PASS: 9 schema preflight scenarios\n'
+    printf 'PASS: 15 schema preflight scenarios\n'
 }
 
 run_browser_suite() {

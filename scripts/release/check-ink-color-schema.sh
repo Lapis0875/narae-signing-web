@@ -77,13 +77,8 @@ WITH facts AS (
       WHERE conrelid = to_regclass('public.board')
         AND contype = 'c'
         AND convalidated
-        AND lower(pg_get_constraintdef(oid)) LIKE '%signature_ink_color%'
-        AND ARRAY(
-          SELECT DISTINCT (captured.values)[1]
-          FROM regexp_matches(pg_get_constraintdef(constraint_row.oid), '''([^'']*)''', 'g')
-            AS captured(values)
-          ORDER BY (captured.values)[1]
-        ) = ARRAY['black', 'white']
+        AND pg_get_expr(conbin, conrelid) =
+          '((signature_ink_color)::text = ANY ((ARRAY[''black''::character varying, ''white''::character varying])::text[]))'
     ) AS new_color_check
 )
 SELECT concat_ws('|', board_exists, slot_exists, old_exists, new_exists,

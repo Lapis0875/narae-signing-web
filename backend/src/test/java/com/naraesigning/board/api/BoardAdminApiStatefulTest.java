@@ -25,6 +25,8 @@ import java.time.ZoneOffset;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
@@ -217,11 +219,8 @@ final class BoardAdminApiStatefulTest {
         perform(post("/api/v1/admin/boards").contentType(APPLICATION_JSON)
                 .content("{\"title\":\"strict board\"}"), session).andExpect(status().isOk());
 
-        for (String body : new String[] {"null", "[]", "{}"}) {
-            assertRejectedUnchanged("empty-patch-" + body, authenticated(patch(boardPath())
-                    .contentType(APPLICATION_JSON).content(body), session),
-                    400, "BOARD_PATCH_EMPTY");
-        }
+        assertRejectedUnchanged("empty-patch-{}", authenticated(patch(boardPath())
+                .contentType(APPLICATION_JSON).content("{}"), session), 400, "BOARD_PATCH_EMPTY");
         assertRejectedUnchanged("malformed-json", authenticated(patch(boardPath())
                 .contentType(APPLICATION_JSON).content("{"), session), 400, "INVALID_REQUEST");
         for (String body : new String[] {
@@ -237,10 +236,25 @@ final class BoardAdminApiStatefulTest {
         assertRejectedUnchanged("removed-slot-background", authenticated(patch(boardPath())
                 .contentType(APPLICATION_JSON).content("{\"background\":\"white\"}"), session),
                 400, "INVALID_REQUEST");
+        assertRejectedUnchanged("unknown-field-mixed-patch", authenticated(patch(boardPath())
+                .contentType(APPLICATION_JSON)
+                .content("{\"title\":\"must not persist\",\"signatureInkColor\":\"black\",\"unknown\":true}"), session),
+                400, "INVALID_REQUEST");
         assertRejectedUnchanged("create-color-owned", authenticated(post("/api/v1/admin/boards")
                 .contentType(APPLICATION_JSON)
                 .content("{\"title\":\"x\",\"signatureInkColor\":\"white\"}"), session),
                 400, "INVALID_REQUEST");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"null", "[]", "[{}]", "\"black\"", "1", "true", "false"})
+    void nonObjectBoardPatchUsesGeneralInvalidRequestWithoutMutation(String body) throws Exception {
+        var session = session(OWNER, NOW);
+        perform(post("/api/v1/admin/boards").contentType(APPLICATION_JSON)
+                .content("{\"title\":\"strict board\"}"), session).andExpect(status().isOk());
+
+        assertRejectedUnchanged("non-object-patch-" + body, authenticated(patch(boardPath())
+                .contentType(APPLICATION_JSON).content(body), session), 400, "INVALID_REQUEST");
     }
 
     @Test
@@ -449,7 +463,8 @@ final class BoardAdminApiStatefulTest {
         }
         System.out.println("QA_REJECT " + scenario + " beforeDigest="
                 + StatefulBoardApiGraph.digestCanonical(before) + " afterDigest="
-                + StatefulBoardApiGraph.digestCanonical(after));
+                + StatefulBoardApiGraph.digestCanonical(after) + " status="
+                + result.getResponse().getStatus() + " response=" + result.getResponse().getContentAsString());
     }
 
     private org.springframework.test.web.servlet.ResultActions perform(
