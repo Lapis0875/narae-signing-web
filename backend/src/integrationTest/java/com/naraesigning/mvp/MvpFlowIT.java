@@ -134,7 +134,7 @@ final class MvpFlowIT {
     void concurrentLayoutConflictAndSignatureSubmissionAreFirstWins() throws Exception {
         // Given: two unplaced slots share one real PostgreSQL board lock.
         var start = new CountDownLatch(1);
-        var body = "{\"x\":0.2,\"y\":0.2,\"width\":0.4,\"height\":0.4,\"background\":\"transparent\"}";
+        var body = "{\"x\":0.2,\"y\":0.2,\"width\":0.4,\"height\":0.4}";
 
         // When: both managers race to occupy the same normalized rectangle.
         List<Integer> layoutStatuses;

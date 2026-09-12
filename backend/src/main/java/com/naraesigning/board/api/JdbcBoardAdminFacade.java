@@ -56,7 +56,7 @@ final class JdbcBoardAdminFacade implements BoardAdminFacade {
             if (patch.signatureInkColorPresent()) {
                 if (!"설정 중".equals(current.status())) throw new BoardLifecycleException("BOARD_NOT_DRAFT");
                 if (patch.signatureInkColor() == SignatureInkColor.WHITE
-                        && backgrounds.current(boardId).isEmpty()) {
+                        && !backgrounds.hasCurrent(boardId)) {
                     throw new BoardLifecycleException("SIGNATURE_INK_BACKGROUND_REQUIRED");
                 }
             }
@@ -177,7 +177,7 @@ final class JdbcBoardAdminFacade implements BoardAdminFacade {
     }
 
     private void requireBackgroundForWhiteInk(UUID boardId, BoardView board) {
-        if (board.signatureInkColor() == SignatureInkColor.WHITE && backgrounds.current(boardId).isEmpty()) {
+        if (board.signatureInkColor() == SignatureInkColor.WHITE && !backgrounds.hasCurrent(boardId)) {
             throw new BoardLifecycleException("SIGNATURE_INK_BACKGROUND_REQUIRED");
         }
     }

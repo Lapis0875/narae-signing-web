@@ -112,6 +112,47 @@ class SignatureInkMigrationIT {
     }
 
     @Test
+    void failedV6UpgradeRollsBackBothColumnChangesAndPreservesLegacyData() throws Exception {
+        resetSchema();
+        migrateToV5();
+        LegacyCapture before;
+        try (var connection = connection(); var statement = connection.createStatement()) {
+            insertLegacyFixture(connection);
+            before = capture(connection);
+            statement.execute("create view legacy_slot_background as select id, background_color from signature_slot");
+        }
+
+        assertThatThrownBy(() -> flywayLatest().migrate())
+                .isInstanceOf(org.flywaydb.core.api.FlywayException.class)
+                .hasMessageContaining("background_color");
+
+        try (var connection = connection(); var statement = connection.createStatement()) {
+            assertThat(columnExists(connection, "board", "signature_ink_color")).isFalse();
+            assertThat(columnExists(connection, "signature_slot", "background_color")).isTrue();
+            assertThat(capture(connection)).isEqualTo(before);
+            try (var colors = statement.executeQuery("select background_color from legacy_slot_background order by id")) {
+                var values = new java.util.ArrayList<String>();
+                while (colors.next()) values.add(colors.getString(1));
+                assertThat(values).containsExactly(null, "white", "WHITE", "transparent", "other");
+            }
+            try (var history = statement.executeQuery("select max(version::integer), bool_and(success) from flyway_schema_history")) {
+                assertThat(history.next()).isTrue();
+                assertThat(history.getInt(1)).isEqualTo(5);
+                assertThat(history.getBoolean(2)).isTrue();
+            }
+            statement.execute("drop view legacy_slot_background");
+        }
+        assertThat(flywayLatest().migrate().migrationsExecuted).isOne();
+        try (var connection = connection()) {
+            assertThat(columnExists(connection, "board", "signature_ink_color")).isTrue();
+            assertThat(columnExists(connection, "signature_slot", "background_color")).isFalse();
+            assertThat(capture(connection)).isEqualTo(before);
+        }
+        System.out.println("QA_MIGRATION real-v6-drop-failure board-column=absent slot-column=present "
+                + "legacy-data=preserved history=V5 retry=one-migration");
+    }
+
+    @Test
     void migratesAnEmptyDatabaseThroughV6() throws Exception {
         resetSchema();
         var first = flywayLatest().migrate();

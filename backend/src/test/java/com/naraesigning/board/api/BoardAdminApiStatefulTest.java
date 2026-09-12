@@ -314,6 +314,29 @@ final class BoardAdminApiStatefulTest {
     }
 
     @Test
+    void legacyAndMalformedSlotPatchesRejectWithoutChangingState() throws Exception {
+        var session = session(OWNER, NOW);
+        perform(post("/api/v1/admin/boards").contentType(APPLICATION_JSON)
+                .content("{\"title\":\"slot validation\"}"), session).andExpect(status().isOk());
+        var roster = perform(post(rosterPath()).contentType(APPLICATION_JSON).content(identity("A")), session)
+                .andExpect(status().isOk()).andReturn();
+        String path = boardPath() + "/slots/" + json(roster, "/slot/id");
+        perform(patch(path).contentType(APPLICATION_JSON)
+                .content("{\"x\":0.1,\"y\":0.1,\"width\":0.2,\"height\":0.2}"), session)
+                .andExpect(status().isOk());
+        for (String body : new String[] {
+                "{\"x\":0.3,\"y\":0.3,\"width\":0.2,\"height\":0.2,\"background\":\"white\"}",
+                "{\"x\":0.3,\"y\":0.3,\"width\":0.2,\"height\":0.2,\"unexpected\":true}",
+                "{\"background\":\"white\"}", "[]", "\"white\"", "null", "{}",
+                "{\"x\":0.3,\"y\":0.3,\"width\":0.2}",
+                "{\"x\":null,\"y\":0.3,\"width\":0.2,\"height\":0.2}"}) {
+            assertRejectedUnchanged("slot-body=" + body,
+                    authenticated(patch(path).contentType(APPLICATION_JSON).content(body), session),
+                    400, "INVALID_REQUEST");
+        }
+    }
+
+    @Test
     void machinePrecisionSlotPatchIsCanonicalizedBeforePersistence() throws Exception {
         // Given
         var session = session(OWNER, NOW);
@@ -325,7 +348,7 @@ final class BoardAdminApiStatefulTest {
 
         // When / Then
         perform(patch(boardPath() + "/slots/" + slotId).contentType(APPLICATION_JSON)
-                        .content("{\"background\":\"transparent\",\"height\":0.18,\"width\":0.24,\"x\":0.367359375,\"y\":0.7693842592592594}"), session)
+                        .content("{\"height\":0.18,\"width\":0.24,\"x\":0.367359375,\"y\":0.7693842592592594}"), session)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.bounds.x").value(0.36735938))
                 .andExpect(jsonPath("$.bounds.y").value(0.76938426));
@@ -488,6 +511,6 @@ final class BoardAdminApiStatefulTest {
         return "{\"organization\":\"Org\",\"job\":\"Role\",\"name\":\"" + name + "\"}";
     }
     private static String slotBody() {
-        return "{\"x\":0.1,\"y\":0.1,\"width\":0.2,\"height\":0.2,\"background\":\"white\"}";
+        return "{\"x\":0.1,\"y\":0.1,\"width\":0.2,\"height\":0.2}";
     }
 }

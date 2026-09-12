@@ -1,5 +1,6 @@
 package com.naraesigning.board.api;
 
+import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.naraesigning.background.CanvasChange;
 import com.naraesigning.board.core.BoardOwner;
@@ -159,5 +160,16 @@ final class BoardAdminController {
         }
         throw new BoardPatchInputException("SIGNATURE_INK_COLOR_INVALID");
     }
-    record SlotBody(BigDecimal x, BigDecimal y, BigDecimal width, BigDecimal height) {}
+    record SlotBody(BigDecimal x, BigDecimal y, BigDecimal width, BigDecimal height) {
+        SlotBody {
+            if (x == null || y == null || width == null || height == null) {
+                throw new IllegalArgumentException("missing slot geometry");
+            }
+        }
+
+        @JsonAnySetter
+        void rejectUnknownField(String field, JsonNode value) {
+            throw new IllegalArgumentException("unknown slot patch field");
+        }
+    }
 }

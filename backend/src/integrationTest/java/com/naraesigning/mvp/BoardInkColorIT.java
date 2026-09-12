@@ -106,6 +106,28 @@ final class BoardInkColorIT {
     }
 
     @Test
+    void registeredBackgroundWithUnavailableObjectAllowsWhitePatch() throws Exception {
+        assertThat(uploadBackground()).isEqualTo(200);
+        MvpFlowFixture.clearBucket(client());
+        assertThat(patchColor("white")).isEqualTo(200);
+        assertThat(color()).isEqualTo("white");
+        assertThat(events.boardUpdatedCount()).isEqualTo(1);
+        System.out.println("QA_METADATA PATCH body={\"signatureInkColor\":\"white\"} status=200 color=white event=1 object=absent");
+    }
+
+    @Test
+    void registeredBackgroundWithUnavailableObjectAllowsWhiteOpen() throws Exception {
+        assertThat(uploadBackground()).isEqualTo(200);
+        MvpFlowFixture.clearBucket(client());
+        jdbc.update("update board set signature_ink_color='white' where id=?", BOARD);
+        prepareOpenLayout();
+        assertThat(open()).isEqualTo(200);
+        assertThat(statusAndColor()).isEqualTo("OPEN:white");
+        assertThat(events.lifecycleCount()).isEqualTo(1);
+        System.out.println("QA_METADATA POST /open body=empty status=200 state=OPEN:white event=1 object=absent");
+    }
+
+    @Test
     void persistsWhiteOnlyWithBackgroundAndEmitsOneEvent() throws Exception {
         assertThat(patchColor("white")).isEqualTo(409);
         assertThat(color()).isEqualTo("black");

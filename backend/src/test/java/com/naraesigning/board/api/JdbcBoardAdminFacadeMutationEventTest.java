@@ -32,7 +32,6 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -121,8 +120,7 @@ final class JdbcBoardAdminFacadeMutationEventTest {
 
     @Test
     void colorPatchFailureOrRollbackPublishesNoBoardUpdatedEvent() {
-        when(backgrounds.current(BOARD)).thenReturn(Optional.of(mock(
-                com.naraesigning.background.BackgroundContent.class)));
+        when(backgrounds.hasCurrent(BOARD)).thenReturn(true);
         doThrow(new IllegalStateException("save failed")).when(boards)
                 .patchLocked(any(), eq(BOARD), isNull(), eq(false), eq(SignatureInkColor.WHITE), eq(true));
 

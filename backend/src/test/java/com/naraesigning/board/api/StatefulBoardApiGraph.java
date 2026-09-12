@@ -137,6 +137,7 @@ final class StatefulBoardApiGraph {
 
     private Object backgroundCall(InvocationOnMock invocation) {
         boardCore.requireBoard(invocation.getArgument(0));
+        if ("hasCurrent".equals(invocation.getMethod().getName())) return background != null;
         if ("current".equals(invocation.getMethod().getName())) {
             return java.util.Optional.ofNullable(background).map(value -> mock(
                     com.naraesigning.background.BackgroundContent.class));
