@@ -93,15 +93,7 @@ historical = {
     "parentInode": 53537484,
 }
 
-mount_proof = None
-if profile == "synthetic-mount-test":
-    mount_check = subprocess.run(
-        ["bash", str(worktree / "scripts/fixtures/verify-ink-color-recovery-mount.sh"), root_arg,
-         os.environ.get("INK_QA_RECOVERY_MOUNT_RECEIPT", "")],
-        capture_output=True, text=True, check=True, timeout=20,
-    )
-    mount_proof = json.loads(mount_check.stdout)
-elif not re.fullmatch(r"/(?:private/)?tmp/narae-ink-color-qa\.[0-9a-f]{16}", root_arg):
+if not re.fullmatch(r"/(?:private/)?tmp/narae-ink-color-qa\.[0-9a-f]{16}", root_arg):
     raise SystemExit("recovery root is outside the exact task namespace")
 if root_arg != str(root.absolute()) or ".." in root.parts:
     raise SystemExit("recovery root is not one explicit absolute literal path")
@@ -119,7 +111,7 @@ current_head = subprocess.run(
 if profile == "historical-r2":
     if root_arg != historical["root"] or source_revision != historical["sourceRevision"] or expected_digest != historical["registryDigest"]:
         raise SystemExit("historical r2 recovery provenance does not match the fixed identity")
-elif profile in {"synthetic-test", "synthetic-mount-test"}:
+elif profile == "synthetic-test":
     docker_host = os.environ.get("DOCKER_HOST", "")
     if os.environ.get("INK_QA_RECOVERY_SYNTHETIC_TEST") != "1" or not docker_host.endswith("/host-docker-must-not-exist.sock") or pathlib.Path(docker_host.removeprefix("unix://")).exists():
         raise SystemExit("synthetic recovery profile requires the isolated nonexistent fake-engine boundary")
@@ -219,7 +211,7 @@ try:
 
     parent = root.parent
     parent_info = parent.lstat()
-    allowed_parent = str(parent) == mount_proof["mountpoint"] if mount_proof else str(parent) in {"/private/tmp", "/tmp"}
+    allowed_parent = str(parent) in {"/private/tmp", "/tmp"}
     if parent.is_symlink() or not stat.S_ISDIR(parent_info.st_mode) or not allowed_parent:
         raise ValueError("recovery parent identity is invalid")
     root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -2232,6 +2224,7 @@ done
 if [[ "$mode" == --recovery-registration ]]; then
     [[ -n "$recovery_root" && -n "$recovery_source_registry" && -n "$recovery_expected_digest" && -n "$recovery_source_revision" && -n "$recovery_profile" ]] \
         || fail "recovery registration requires exact root, source registry, digest, source revision, and profile"
+    [[ "$recovery_profile" != synthetic-mount-test ]] || fail "recovery profile is disabled: synthetic-mount-test"
     [[ -d "$evidence_dir" && ! -L "$evidence_dir" ]] || fail "recovery evidence directory must already exist and must not be a symlink"
     evidence_dir=$(CDPATH= cd -- "$evidence_dir" && pwd)
 else

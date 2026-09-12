@@ -63,10 +63,10 @@ PY
 
 safe_remove_recovery_root() {
     local owned_root=$1 identity_file=$2
-    python3 - "$owned_root" "$identity_file" "$root" <<'PY'
-import hashlib, json, os, pathlib, re, stat, subprocess, sys
+    python3 - "$owned_root" "$identity_file" <<'PY'
+import hashlib, json, os, pathlib, re, stat, sys
 
-root_arg, identity_arg, worktree_arg = sys.argv[1:]
+root_arg, identity_arg = sys.argv[1:]
 root = pathlib.Path(root_arg); identity_path = pathlib.Path(identity_arg); uid = os.getuid()
 identity_fd = os.open(identity_path, os.O_RDONLY | os.O_NOFOLLOW)
 try:
@@ -76,11 +76,7 @@ try:
     identity = json.loads(os.read(identity_fd, 1024 * 1024 + 1))
 finally:
     os.close(identity_fd)
-mounted_fixture = False
-if os.environ.get("INK_QA_RECOVERY_MOUNT_RECEIPT"):
-    subprocess.run(["bash", str(pathlib.Path(worktree_arg) / "scripts/fixtures/verify-ink-color-recovery-mount.sh"), root_arg, os.environ["INK_QA_RECOVERY_MOUNT_RECEIPT"]], check=True, capture_output=True, timeout=20)
-    mounted_fixture = True
-if identity.get("root") != root_arg or (not mounted_fixture and not re.fullmatch(r"/(?:private/)?tmp/narae-ink-color-qa\.[0-9a-f]{16}", root_arg)) or root_arg == "/private/tmp/narae-ink-color-qa.7338ba83ee9e2d65" or root.parent.resolve(strict=True) != root.parent:
+if identity.get("root") != root_arg or not re.fullmatch(r"/(?:private/)?tmp/narae-ink-color-qa\.[0-9a-f]{16}", root_arg) or root_arg == "/private/tmp/narae-ink-color-qa.7338ba83ee9e2d65" or root.parent.resolve(strict=True) != root.parent:
     raise ValueError("cleanup root provenance changed")
 parent_fd = os.open(root.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 root_fd = os.open(root.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
@@ -140,28 +136,65 @@ cleanup() {
     if [[ -n "$recovery_signal_shell_pid" ]]; then kill "$recovery_signal_shell_pid" 2>/dev/null || true; wait "$recovery_signal_shell_pid" 2>/dev/null || true; fi
     if [[ -n "$quiescence_probe_pid" ]]; then kill "$quiescence_probe_pid" 2>/dev/null || true; wait "$quiescence_probe_pid" 2>/dev/null || true; fi
     if [[ -n "$fake_root" && -d "$fake_root" ]]; then find "$fake_root" -depth -delete; fi
-    if [[ -n "$recovery_root" && ( -e "$recovery_root" || -L "$recovery_root" ) ]]; then
-        if ! safe_remove_recovery_root "$recovery_root" "$recovery_cleanup_identity" > "$evidence_dir/recovery-teardown.json" 2> "$evidence_dir/recovery-teardown.stderr"; then
-            printf 'REFUSED: synthetic recovery-root teardown retained %s\n' "$recovery_root" >&2
-            [[ $incoming -ne 0 ]] || incoming=1
-        fi
-    fi
     exit "$incoming"
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --red|--r2-red|--r4-red|--r5-red|--r6-red|--r7-red|--r8-red|--r9-red|--r10-red|--recovery-registration-red|--recovery-registration-tests|--recovery-registration-demo|--green) [[ -z "$mode" ]] || fail "choose exactly one mode"; mode=$1; shift ;;
+        --red|--r2-red|--r4-red|--r5-red|--r6-red|--r7-red|--r8-red|--r9-red|--r10-red|--recovery-registration-red|--recovery-registration-tests|--recovery-registration-demo|--disabled-profile-test|--green) [[ -z "$mode" ]] || fail "choose exactly one mode"; mode=$1; shift ;;
         --evidence-dir) [[ $# -ge 2 ]] || fail "--evidence-dir requires a path"; evidence_dir=$2; shift 2 ;;
         *) fail "unknown argument: $1" ;;
     esac
 done
-[[ "$mode" == --red || "$mode" == --r2-red || "$mode" == --r4-red || "$mode" == --r5-red || "$mode" == --r6-red || "$mode" == --r7-red || "$mode" == --r8-red || "$mode" == --r9-red || "$mode" == --r10-red || "$mode" == --recovery-registration-red || "$mode" == --recovery-registration-tests || "$mode" == --recovery-registration-demo || "$mode" == --green ]] \
+[[ "$mode" == --red || "$mode" == --r2-red || "$mode" == --r4-red || "$mode" == --r5-red || "$mode" == --r6-red || "$mode" == --r7-red || "$mode" == --r8-red || "$mode" == --r9-red || "$mode" == --r10-red || "$mode" == --recovery-registration-red || "$mode" == --recovery-registration-tests || "$mode" == --recovery-registration-demo || "$mode" == --disabled-profile-test || "$mode" == --green ]] \
     || fail "a supported test mode is required"
 [[ -n "$evidence_dir" ]] || fail "--evidence-dir is required"
 evidence_dir=$(mkdir -p "$evidence_dir" && CDPATH= cd -- "$evidence_dir" && pwd)
-if [[ ( "$mode" == --recovery-registration-tests || "$mode" == --recovery-registration-demo ) && -z "${INK_QA_RECOVERY_MOUNT_RECEIPT:-}" ]]; then
-    exec bash "$root/scripts/fixtures/test-ink-color-recovery-mount.sh" --evidence-dir "$evidence_dir"
+if [[ "$mode" == --disabled-profile-test ]]; then
+    disabled_root=/private/tmp/narae-ink-color-qa.0000000000000000/recovery-fixture
+    disabled_source=/private/tmp/narae-ink-color-qa.0000000000000000/absent/ownership-registry.json
+    disabled_bin="$evidence_dir/disabled-profile-bin"
+    disabled_boundary_log="$evidence_dir/disabled-profile-boundary.log"
+    disabled_docker_log="$evidence_dir/disabled-profile-docker.log"
+    printf '{"action":"fixture-intent","root":"%s","creatingRoot":false,"mount":false,"image":false,"docker":false}\n' "$disabled_root" > "$evidence_dir/resource-journal.jsonl"
+    mkdir -m 700 "$disabled_bin"
+    printf '%s\n' '#!/bin/sh' \
+        'printf '\''%s\n'\'' "$@" > "$DISABLED_PROFILE_BOUNDARY_LOG"' \
+        'printf '\''{"mountpoint":"/private/tmp/narae-ink-color-qa.0000000000000000"}\n'\''' \
+        'exit 0' > "$disabled_bin/bash"
+    printf '%s\n' '#!/bin/sh' 'printf '\''docker-invoked\n'\'' > "$DISABLED_PROFILE_DOCKER_LOG"' 'exit 0' > "$disabled_bin/docker"
+    chmod 700 "$disabled_bin/bash" "$disabled_bin/docker"
+    set +e
+    PATH="$disabled_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    DISABLED_PROFILE_BOUNDARY_LOG="$disabled_boundary_log" \
+    DISABLED_PROFILE_DOCKER_LOG="$disabled_docker_log" \
+        /bin/bash "$root/scripts/fixtures/run-ink-color-qa.sh" --recovery-registration \
+        --recovery-root "$disabled_root" --source-registry "$disabled_source" \
+        --expected-registry-sha256 "$(printf '0%.0s' {1..64})" \
+        --source-revision "$(git -C "$root" rev-parse HEAD)" \
+        --recovery-profile synthetic-mount-test --evidence-dir "$evidence_dir" \
+        > "$evidence_dir/disabled-profile.stdout" 2> "$evidence_dir/disabled-profile.stderr"
+    disabled_rc=$?
+    set -e
+    printf '%s\n' "$disabled_rc" > "$evidence_dir/disabled-profile.exit-code"
+    python3 - "$disabled_bin" <<'PY'
+import pathlib
+import sys
+
+directory = pathlib.Path(sys.argv[1])
+for name in ("bash", "docker"):
+    (directory / name).unlink()
+directory.rmdir()
+PY
+    [[ $disabled_rc -ne 0 ]] || fail "disabled recovery profile reported success"
+    grep -Fxq 'FAIL: recovery profile is disabled: synthetic-mount-test' "$evidence_dir/disabled-profile.stderr" \
+        || fail "disabled recovery profile did not return its public CLI error category"
+    [[ ! -e "$disabled_root" && ! -e "$evidence_dir/recovery-registration.json" ]] \
+        || fail "disabled recovery profile created a root or registration record"
+    [[ ! -e "$disabled_boundary_log" && ! -e "$disabled_docker_log" ]] \
+        || fail "disabled recovery profile reached mount verification or Docker"
+    printf 'PASS: synthetic-mount-test rejected before root, receipt, mount, or Docker work\n'
+    exit 0
 fi
 fake_root=$(mktemp -d "${TMPDIR:-/tmp}/ink-color-cleanup-guardrail.XXXXXX")
 chmod 700 "$fake_root"
@@ -919,33 +952,7 @@ fi
 if [[ "$mode" == --recovery-registration-tests || "$mode" == --recovery-registration-demo || "$mode" == --r10-red ]]; then
     scenario_dir="$evidence_dir/recovery-build-failure"
     recovery_test_profile=synthetic-test
-    if [[ -n "${INK_QA_RECOVERY_MOUNT_RECEIPT:-}" ]]; then
-        recovery_root=$(python3 -c 'import json, os; print(json.load(open(os.environ["INK_QA_RECOVERY_MOUNT_RECEIPT"]))["root"])')
-        bash "$root/scripts/fixtures/verify-ink-color-recovery-mount.sh" "$recovery_root" "$INK_QA_RECOVERY_MOUNT_RECEIPT" > "$evidence_dir/verified-mount.json"
-        mkdir -p -m 700 "$scenario_dir/launcher"
-        python3 - "$recovery_root" "$scenario_dir/launcher/ownership-registry.json" "$fake_root/state/state.json" <<'PY'
-import json, os, pathlib, secrets, time, sys
-root, registry, state = map(pathlib.Path, sys.argv[1:])
-if list(root.iterdir()): raise SystemExit("mounted recovery fixture root is not empty")
-owner = secrets.token_hex(32); project = "ink-color-qa-" + owner[:12]
-for name, text in ((".ink-color-qa-owned", owner + "\n"), ("compose.yml", "services: {}\n")):
-    path = root / name; path.write_text(text); path.chmod(0o600)
-value = {"schemaVersion": 2, "runId": owner, "project": project, "ownerLabel": {"key": "com.naraemedia.qa.owner", "value": owner}, "createdAtEpoch": int(time.time()), "sealed": False, "resources": [], "intents": [
-    {"scope": "local", "kind": "temporary-root", "identity": str(root)},
-    {"scope": "local", "kind": "launcher-pid", "identity": "999999"},
-    {"scope": "docker", "kind": "network", "identity": project + "_default"},
-    {"scope": "docker", "kind": "volume", "identity": project + "_probe-data"},
-    {"scope": "docker", "kind": "image", "identity": project + ":probe"}]}
-registry.write_text(json.dumps(value) + "\n"); registry.chmod(0o600)
-state.write_text(json.dumps({"created": [], "started": True, "runId": owner, "project": project, "registry": str(registry), "compose": str(root / "compose.yml")}) + "\n")
-PY
-        for log in fake-docker-mutations.log fake-docker-spawns.log fake-docker-argv.log fake-signal.log; do : > "$scenario_dir/$log"; done
-        recovery_cleanup_identity="$evidence_dir/recovery-root-cleanup-identity.json"
-        capture_recovery_root_identity "$recovery_root" "$scenario_dir/launcher/ownership-registry.json" "$recovery_cleanup_identity"
-        recovery_test_profile=synthetic-mount-test
-    else
-        run_scenario recovery-build-failure
-    fi
+    run_scenario recovery-build-failure
     original_registry="$scenario_dir/launcher/ownership-registry.json"
     original_digest=$(shasum -a 256 "$original_registry" | awk '{print $1}')
     mutation_log="$scenario_dir/fake-docker-mutations.log"
@@ -1100,7 +1107,7 @@ source_path, record_path, root_path, output_path = map(pathlib.Path, sys.argv[1:
 source = json.loads(source_path.read_text())
 record = json.loads(record_path.read_text())
 required = {"schemaVersion","recordType","scope","profile","sealed","recordId","sourceRevision","implementationRevision","sourceRegistry","owner","originalIntents","unfulfilledDockerIntents","root","quiescence","dockerObservation","actions","registeredAtEpoch"}
-if set(record) != required or record["schemaVersion"] != 1 or record["recordType"] != "ink-color-recovery-registration" or record["scope"] != "registration-only" or record["profile"] not in {"synthetic-test", "synthetic-mount-test"} or record["sealed"] is not True:
+if set(record) != required or record["schemaVersion"] != 1 or record["recordType"] != "ink-color-recovery-registration" or record["scope"] != "registration-only" or record["profile"] != "synthetic-test" or record["sealed"] is not True:
     raise SystemExit("recovery record schema/seal mismatch")
 if record["originalIntents"] != source["intents"] or record["unfulfilledDockerIntents"] != [item for item in source["intents"] if item["scope"] == "docker"]:
     raise SystemExit("recovery record did not preserve original/unfulfilled intents")
@@ -1150,7 +1157,7 @@ if value.get("sealed") is not True or value.get("scope") != "registration-only" 
     raise SystemExit("post-publish interruption left a partial or consumable-invalid record")
 PY
 
-    refusal_cases=(candidate owner-only-candidate project-only-candidate query-error query-hung interruption interruption-repeat malformed stale-digest duplicate-intent live-launcher identity-carrier marker-mismatch unsafe-mode registry-mode descendant-symlink unsafe-type metadata-race wrong-path historical-profile)
+    refusal_cases=(candidate owner-only-candidate project-only-candidate query-error query-hung interruption interruption-repeat malformed malformed-profile stale-digest duplicate-intent live-launcher identity-carrier marker-mismatch unsafe-mode registry-mode descendant-symlink unsafe-type metadata-race wrong-path historical-profile)
     : > "$evidence_dir/refusal-matrix.tsv"
     for refusal in "${refusal_cases[@]}"; do
         refusal_dir="$evidence_dir/refusal-$refusal"
@@ -1173,6 +1180,7 @@ PY
             query-hung) fake_scenario=recovery-query-hung ;;
             interruption|interruption-repeat) interrupt=before-publish ;;
             malformed) printf '{malformed\n' > "$refusal_registry" ;;
+            malformed-profile) selected_profile=$'synthetic-test\nignored' ;;
             stale-digest)
                 printf '\n' >> "$refusal_registry"
                 ;;
@@ -1340,10 +1348,24 @@ PY
 
     [[ "$(shasum -a 256 "$original_registry" | awk '{print $1}')" == "$original_digest" ]] \
         || fail "refusal matrix changed the original registry"
+    retained_root="$evidence_dir/retained-recovery-root"
+    [[ ! -e "$retained_root" ]] || fail "retained recovery evidence already exists"
+    mv "$recovery_root" "$retained_root"
+    archive_rename_count=1
+    for suffix in symlink-observation replacement-observation; do
+        observation="$recovery_root.$suffix"
+        if [[ -e "$observation" || -L "$observation" ]]; then
+            mv "$observation" "$evidence_dir/retained-$suffix"
+            archive_rename_count=$((archive_rename_count + 1))
+        fi
+    done
+    printf '{"outcome":"retained","rootTeardownCount":0,"mountMutationCount":0,"imageMutationCount":0,"dockerMutationCount":0,"evidenceArchiveRenameCount":%s}\n' \
+        "$archive_rename_count" > "$evidence_dir/cleanup-receipt.json"
+    recovery_root=""
     if [[ "$mode" == --recovery-registration-demo ]]; then
         printf 'PASS: recovery registration demo; sealed registration-only record; original unchanged; candidate refused; no action\n'
     else
-        printf 'PASS: recovery registration and 21 refusal cases; original unchanged; no action\n'
+        printf 'PASS: recovery registration and 22 refusal cases; original unchanged; no action\n'
     fi
     exit 0
 fi
