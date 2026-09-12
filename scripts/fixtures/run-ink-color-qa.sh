@@ -33,6 +33,7 @@ recovery_source_registry=""
 recovery_expected_digest=""
 recovery_source_revision=""
 recovery_profile=""
+playwright_lifecycle=""
 
 fail() {
     printf 'FAIL: %s\n' "$*" >&2
@@ -916,7 +917,50 @@ def validate_local_intents(payload, allow_missing_root=False):
         elif kind == "port":
             if not identity.isdigit() or not 1 <= int(identity) <= 65535:
                 raise ValueError("registered port is invalid")
-        elif kind in {"process-intent", "browser-context", "launcher-pid"}:
+        elif kind == "process-intent":
+            lifecycle = pathlib.Path(identity)
+            expected = (temporary_root / "playwright-process-lifecycle.jsonl").absolute()
+            if (
+                lifecycle.absolute() != expected
+                or lifecycle.is_symlink()
+                or not lifecycle.is_file()
+                or stat.S_IMODE(lifecycle.stat().st_mode) != 0o600
+            ):
+                raise ValueError("registered Playwright lifecycle identity is not exact")
+            try:
+                events = [json.loads(line) for line in lifecycle.read_text(encoding="utf-8").splitlines()]
+            except (OSError, ValueError) as error:
+                raise ValueError("registered Playwright lifecycle evidence is invalid") from error
+            if not events or events[0] != {
+                "event": "registered",
+                "runId": run_id,
+                "identity": str(expected),
+            }:
+                raise ValueError("registered Playwright lifecycle is not bound to this run")
+            if action == "seal" and len(events) == 1:
+                continue
+            if [event.get("event") for event in events] != [
+                "registered",
+                "started",
+                "exited",
+                "cleanup-requested",
+                "absence",
+            ]:
+                raise ValueError("Playwright lifecycle is incomplete")
+            started_event = events[1]
+            absence_event = events[-1]
+            if (
+                started_event.get("runId") != run_id
+                or not isinstance(started_event.get("pid"), int)
+                or not isinstance(started_event.get("pgid"), int)
+                or absence_event.get("runId") != run_id
+                or absence_event.get("pid") != started_event.get("pid")
+                or absence_event.get("pgid") != started_event.get("pgid")
+                or absence_event.get("processGone") is not True
+                or absence_event.get("groupGone") is not True
+            ):
+                raise ValueError("Playwright lifecycle absence is not proven")
+        elif kind in {"browser-context", "launcher-pid"}:
             if not identity:
                 raise ValueError("registered process/browser identity is invalid")
         else:
@@ -1395,6 +1439,12 @@ cleanup() {
                 retain_cleanup temporary-root-registry-validation-or-signal-failed
             fi
         fi
+        if [[ "$cleanup_retain" == false && -n "$playwright_lifecycle" ]]; then
+            if ! cp "$playwright_lifecycle" "$evidence_dir/playwright-process-lifecycle.jsonl" \
+                || ! chmod 600 "$evidence_dir/playwright-process-lifecycle.jsonl"; then
+                retain_cleanup process-lifecycle-evidence-copy-failed
+            fi
+        fi
         if [[ "$cleanup_retain" == false ]]; then
             cleanup_boundary after-local-validation || retain_cleanup launcher-signal-after-local-validation
         fi
@@ -1430,9 +1480,14 @@ cleanup() {
         [[ $incoming -ne 0 ]] && exit "$incoming"
         exit 97
     fi
-    printf 'cleanup=passed\nproject=%s\nregistered_owned_resources=0\ndestructive_actions_issued=%s\nregistry_receipt=%s\nregistry_receipt_checksum=%s\ntemporary_root_removed=true\n' \
+    local process_lifecycle_summary=""
+    if [[ -n "$playwright_lifecycle" ]]; then
+        process_lifecycle_summary=$(printf '\nprocess_lifecycle=%s\nprocess_identity_absent=true' \
+            "${evidence_dir}/playwright-process-lifecycle.jsonl")
+    fi
+    printf 'cleanup=passed\nproject=%s\nregistered_owned_resources=0\ndestructive_actions_issued=%s\nregistry_receipt=%s\nregistry_receipt_checksum=%s\ntemporary_root_removed=true%s\n' \
         "$project" "$destructive_action_count" "$registry_receipt" "$registry_receipt_checksum" \
-        > "$evidence_dir/cleanup.md"
+        "$process_lifecycle_summary" > "$evidence_dir/cleanup.md"
     trap - EXIT HUP INT TERM
     [[ $signal_exit_code -ne 0 ]] && exit "$signal_exit_code"
     exit "$incoming"
@@ -1757,12 +1812,13 @@ run_browser_suite() {
     local credential_file browser_profile
     credential_file="$temporary_root/browser-credentials.json"
     browser_profile="$temporary_root/browser-profile"
+    playwright_lifecycle="$temporary_root/playwright-process-lifecycle.jsonl"
     registry_declare local credential-file "$credential_file"
     registry_declare local credential-file "$temporary_root/secrets/master.key"
     registry_declare local browser-profile "$browser_profile"
     registry_declare local browser-context "playwright-$run_id"
     registry_declare local process-intent admin-bootstrap
-    registry_declare local process-intent playwright
+    registry_declare local process-intent "$playwright_lifecycle"
     register_docker_intents container \
         "${project}-frontend-1" "${project}-backend-1" "${project}-postgres-1" \
         "${project}-minio-1" "${project}-minio-init-1"
@@ -1771,6 +1827,9 @@ run_browser_suite() {
     mkdir -m 700 "$temporary_root/secrets" "$temporary_root/postgres" "$temporary_root/minio" "$browser_profile"
     umask 077
     openssl rand 32 > "$temporary_root/secrets/master.key"
+    printf '{"event":"registered","runId":"%s","identity":"%s"}\n' \
+        "$run_id" "$playwright_lifecycle" > "$playwright_lifecycle"
+    chmod 600 "$playwright_lifecycle"
 
     export FRONTEND_PORT="$frontend_port" NARAE_DATA_ROOT="$temporary_root"
     export POSTGRES_DB=ink_color_qa POSTGRES_USER="inkqa_$(openssl rand -hex 4)"
@@ -1829,8 +1888,11 @@ PY
     export TASK8_CREDENTIAL_FILE="$credential_file" TASK8_EVIDENCE_DIR="$evidence_dir"
     export TASK8_SUITE_MODE="$suite_mode"
     if [[ "$suite_mode" == smoke ]]; then
-        run_bounded 180 bash -c 'cd "$1" && npx playwright test e2e/ink-color-real-smoke.spec.ts --config e2e/ink-color.real.config.ts --project=chromium --workers=1 --reporter=line' \
-            ink-color-smoke "$root/frontend" > "$evidence_dir/playwright-real.log" 2>&1
+        TASK30_LIFECYCLE_FILE="$playwright_lifecycle" TASK30_RUN_ID="$run_id" \
+            TASK30_WORKING_DIRECTORY="$root/frontend" \
+            run_bounded 180 npx playwright test e2e/ink-color-real-smoke.spec.ts \
+            --config e2e/ink-color.real.config.ts --project=chromium --workers=1 --reporter=line \
+            > "$evidence_dir/playwright-real.log" 2>&1
         [[ -s "$evidence_dir/smoke.png" ]] || fail "real smoke screenshot is missing"
         [[ -s "$evidence_dir/smoke-result.json" ]] || fail "real smoke result is missing"
         python3 - "$evidence_dir/smoke-result.json" <<'PY'
@@ -1872,8 +1934,11 @@ if match is None or "public-display-real-stack.spec.ts" not in text:
 print(int(match.group(1)))
 PY
 )
-        run_bounded 420 bash -c 'cd "$1" && npx playwright test e2e/public-display-real-stack.spec.ts --config e2e/ink-color.real.config.ts --project=chromium --workers=1 --reporter=line' \
-            ink-color-public "$root/frontend" > "$evidence_dir/playwright-real.log" 2>&1
+        TASK30_LIFECYCLE_FILE="$playwright_lifecycle" TASK30_RUN_ID="$run_id" \
+            TASK30_WORKING_DIRECTORY="$root/frontend" \
+            run_bounded 420 npx playwright test e2e/public-display-real-stack.spec.ts \
+            --config e2e/ink-color.real.config.ts --project=chromium --workers=1 --reporter=line \
+            > "$evidence_dir/playwright-real.log" 2>&1
         python3 - "$evidence_dir/playwright-real.log" "$evidence_dir/public-baseline-result.json" "$public_tests" <<'PY'
 import json
 import pathlib
@@ -1933,8 +1998,12 @@ pathlib.Path(sys.argv[2]).write_text(json.dumps({
 print(tests)
 PY
 )
-    run_bounded 420 bash -c 'cd "$1" && npx playwright test e2e/board-signature-ink-color.spec.ts e2e/mobile-slot-label.spec.ts e2e/public-display-real-stack.spec.ts --config e2e/ink-color.real.config.ts --project=chromium --workers=1 --reporter=line' \
-        ink-color-full "$root/frontend" > "$evidence_dir/playwright-real.log" 2>&1
+    TASK30_LIFECYCLE_FILE="$playwright_lifecycle" TASK30_RUN_ID="$run_id" \
+        TASK30_WORKING_DIRECTORY="$root/frontend" \
+        run_bounded 420 npx playwright test e2e/board-signature-ink-color.spec.ts \
+        e2e/mobile-slot-label.spec.ts e2e/public-display-real-stack.spec.ts \
+        --config e2e/ink-color.real.config.ts --project=chromium --workers=1 --reporter=line \
+        > "$evidence_dir/playwright-real.log" 2>&1
     python3 - "$evidence_dir/playwright-real.log" "$evidence_dir/task8-real-result.json" "$expected_tests" <<'PY'
 import json
 import pathlib
