@@ -17,6 +17,7 @@ const board = {
   createdAt: "2026-08-21T00:00:00.000Z",
   id: boardId,
   shareLinkVersion: 1,
+  signatureInkColor: "black",
   status: "설정 중",
   title: "여름 발표회",
   updatedAt: "2026-08-21T00:00:00.000Z",
@@ -25,7 +26,6 @@ const rosterEntry = {
   id: entryId,
   identity: { job: "교사", name: "김나래", organization: "나래초" },
   slot: {
-    backgroundColor: "TRANSPARENT",
     height: null,
     id: slotId,
     placementStatus: "UNPLACED",

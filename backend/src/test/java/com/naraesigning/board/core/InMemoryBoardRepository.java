@@ -17,7 +17,8 @@ final class InMemoryBoardRepository implements BoardRepository {
     public StoredBoard create(NewBoard board) {
         var stored = new StoredBoard(
                 board.id(), board.owner(), board.title(), board.status(),
-                board.canvasWidth(), board.canvasHeight(), board.share(), CREATED_AT, CREATED_AT);
+                board.canvasWidth(), board.canvasHeight(), board.signatureInkColor(), board.share(),
+                CREATED_AT, CREATED_AT);
         records.put(board.id(), stored);
         return stored;
     }
@@ -40,10 +41,23 @@ final class InMemoryBoardRepository implements BoardRepository {
     }
 
     @Override
+    public Optional<StoredBoard> lock(BoardOwner owner, UUID boardId) {
+        return find(owner, boardId);
+    }
+
+    @Override
     public Optional<StoredBoard> rename(BoardOwner owner, UUID boardId, BoardTitle title) {
         var current = find(owner, boardId);
         current.ifPresent(board -> records.put(boardId, board.withTitle(title)));
         return current.map(board -> board.withTitle(title));
+    }
+
+    @Override
+    public Optional<StoredBoard> patch(BoardOwner owner, UUID boardId, BoardTitle title,
+            SignatureInkColor signatureInkColor) {
+        var current = find(owner, boardId);
+        current.ifPresent(board -> records.put(boardId, board.withPatch(title, signatureInkColor)));
+        return current.map(board -> board.withPatch(title, signatureInkColor));
     }
 
     @Override

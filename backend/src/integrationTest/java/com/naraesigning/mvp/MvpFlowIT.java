@@ -74,7 +74,7 @@ final class MvpFlowIT {
 
     @Container
     static final GenericContainer<?> MINIO = new GenericContainer<>(
-            DockerImageName.parse("minio/minio:RELEASE.2025-04-22T22-12-26Z"))
+            DockerImageName.parse("quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z"))
             .withCommand("server", "/data")
             .withEnv("MINIO_ROOT_USER", "synthetic-task30-user")
             .withEnv("MINIO_ROOT_PASSWORD", "synthetic-task30-password")
@@ -134,7 +134,7 @@ final class MvpFlowIT {
     void concurrentLayoutConflictAndSignatureSubmissionAreFirstWins() throws Exception {
         // Given: two unplaced slots share one real PostgreSQL board lock.
         var start = new CountDownLatch(1);
-        var body = "{\"x\":0.2,\"y\":0.2,\"width\":0.4,\"height\":0.4,\"background\":\"transparent\"}";
+        var body = "{\"x\":0.2,\"y\":0.2,\"width\":0.4,\"height\":0.4}";
 
         // When: both managers race to occupy the same normalized rectangle.
         List<Integer> layoutStatuses;

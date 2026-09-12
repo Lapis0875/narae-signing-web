@@ -248,6 +248,29 @@ def process_exists(pid: int) -> bool:
     return True
 
 
+def append_lifecycle(event: str, **fields: object) -> None:
+    lifecycle_value = os.environ.get("TASK30_LIFECYCLE_FILE")
+    if not lifecycle_value:
+        return
+    path = Path(lifecycle_value)
+    if not path.is_absolute() or path.is_symlink() or not path.parent.is_dir():
+        raise Task30RunnerError("LIFECYCLE_PATH_INVALID")
+    if not path.exists():
+        path.touch(mode=0o600, exist_ok=False)
+    info = path.lstat()
+    if not path.is_file() or info.st_mode & 0o777 != 0o600:
+        raise Task30RunnerError("LIFECYCLE_FILE_METADATA_INVALID")
+    payload = {
+        "event": event,
+        "runId": os.environ.get("TASK30_RUN_ID", ""),
+        **fields,
+    }
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(payload, separators=(",", ":")) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
 def parse_tree_identity(line: str) -> tuple[int, int, int, int]:
     parts = line.strip().split()
     if len(parts) != 4:
@@ -448,6 +471,38 @@ def self_test() -> int:
             raise Task30RunnerError("SELF_TEST_SIGNAL_STATUS_INVALID")
         assert_tree_gone(term_identity, "SELF_TEST_SIGNAL")
         print("PTY_OUTER_TERM", *term_identity, f"supervisor_status={target_status}", "alive_after=false")
+        lifecycle = root / "playwright-process-lifecycle.jsonl"
+        lifecycle_environment = os.environ.copy()
+        lifecycle_environment.update({
+            "TASK30_LIFECYCLE_FILE": str(lifecycle),
+            "TASK30_RUN_ID": "task30-self-test-run",
+        })
+        lifecycle_result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--timeout",
+                "10",
+                sys.executable,
+                "-c",
+                "import time; time.sleep(0.1)",
+            ],
+            check=False,
+            env=lifecycle_environment,
+            capture_output=True,
+            text=True,
+        )
+        if lifecycle_result.returncode != 0:
+            raise Task30RunnerError("SELF_TEST_LIFECYCLE_RUN_FAILED")
+        lifecycle_events = [json.loads(line) for line in lifecycle.read_text().splitlines()]
+        if (
+            [event.get("event") for event in lifecycle_events]
+            != ["started", "exited", "cleanup-requested", "absence"]
+            or lifecycle_events[-1].get("processGone") is not True
+            or lifecycle_events[-1].get("groupGone") is not True
+        ):
+            raise Task30RunnerError("SELF_TEST_LIFECYCLE_ABSENCE_INVALID")
+        print("PLAYWRIGHT_LIFECYCLE", "events=4", "processGone=true", "groupGone=true")
     print("PASS: engine FIFOs and Playwright/PTY timeout/TERM cleanup leave no children")
     return 0
 
@@ -461,13 +516,48 @@ def supervise() -> int:
         raise Task30RunnerError("INVALID_TIMEOUT_SECONDS") from None
     if seconds < 1:
         raise Task30RunnerError("INVALID_TIMEOUT_SECONDS")
-    process = subprocess.Popen(sys.argv[3:], start_new_session=True)
+    working_directory = os.environ.get("TASK30_WORKING_DIRECTORY")
+    process = subprocess.Popen(
+        sys.argv[3:],
+        cwd=working_directory or None,
+        start_new_session=True,
+    )
+    process_group = process.pid
     cleanup = lambda: terminate_process(process, SUPERVISED_GRACE_SECONDS)
+    result: int | None = None
     try:
         with cleanup_on_signals(cleanup):
-            return wait_bounded(process, seconds, "COMMAND_TIMEOUT")
+            append_lifecycle(
+                "started",
+                pid=process.pid,
+                pgid=process_group,
+                command=sys.argv[3:],
+                cwd=working_directory or os.getcwd(),
+            )
+            result = wait_bounded(process, seconds, "COMMAND_TIMEOUT")
+            append_lifecycle(
+                "exited",
+                pid=process.pid,
+                pgid=process_group,
+                exitCode=result,
+            )
     finally:
-        cleanup()
+        try:
+            append_lifecycle("cleanup-requested", pid=process.pid, pgid=process_group)
+        finally:
+            try:
+                cleanup()
+            finally:
+                append_lifecycle(
+                    "absence",
+                    pid=process.pid,
+                    pgid=process_group,
+                    processGone=not process_exists(process.pid),
+                    groupGone=not group_exists(process_group),
+                )
+    if result is None:
+        raise Task30RunnerError("SUPERVISED_RESULT_MISSING")
+    return result
 
 
 def run_live() -> int:

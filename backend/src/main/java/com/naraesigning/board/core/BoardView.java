@@ -9,6 +9,7 @@ public record BoardView(
         String status,
         int canvasWidth,
         int canvasHeight,
+        SignatureInkColor signatureInkColor,
         int shareLinkVersion,
         Instant createdAt,
         Instant updatedAt) {
@@ -19,6 +20,7 @@ public record BoardView(
                 statusLabel(board.status()),
                 board.canvasWidth(),
                 board.canvasHeight(),
+                board.signatureInkColor(),
                 board.share().version(),
                 board.createdAt(),
                 board.updatedAt());

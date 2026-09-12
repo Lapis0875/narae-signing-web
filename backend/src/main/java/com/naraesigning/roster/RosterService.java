@@ -66,7 +66,7 @@ public final class RosterService {
             var slot = stored.slot();
             return new RosterEntry(stored.id(), RosterIdentity.decode(plaintext), stored.submitted(),
                     new RosterEntry.Slot(slot.id(), slot.placementStatus(), slot.x(), slot.y(),
-                            slot.width(), slot.height(), slot.backgroundColor(), slot.revision()));
+                            slot.width(), slot.height(), slot.revision()));
         } finally {
             Arrays.fill(plaintext, (byte) 0);
         }

@@ -4,6 +4,8 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.naraesigning.board.core.SignatureInkColor;
+
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -61,9 +63,8 @@ final class JdbcFinalPngSnapshotRepositoryTest {
                 values (?, ?, ?, ?, 1, ?)
                 """, ROSTER, BOARD, bytes(4), bytes(5), bytes(6));
         setup.update("""
-                insert into signature_slot (id, roster_entry_id, placement_status, x, y, width,
-                                            height, background_color)
-                values (?, ?, 'PLACED', 0.12500000, 0.25000000, 0.25000000, 0.25000000, 'white')
+                insert into signature_slot (id, roster_entry_id, placement_status, x, y, width, height)
+                values (?, ?, 'PLACED', 0.12500000, 0.25000000, 0.25000000, 0.25000000)
                 """, SLOT, ROSTER);
     }
 
@@ -81,6 +82,7 @@ final class JdbcFinalPngSnapshotRepositoryTest {
         var currentClosed = repository.readClosed(OWNER, BOARD);
 
         assertThat(firstClosed.slots().getFirst().x()).isEqualByComparingTo("0.12500000");
+        assertThat(firstClosed.signatureInkColor()).isEqualTo(SignatureInkColor.BLACK);
         assertThat(currentClosed.slots().getFirst().x()).isEqualByComparingTo("0.62500000");
         assertThat(setup.queryForObject("select status from board where id = ?", String.class, BOARD))
                 .isEqualTo("CLOSED");

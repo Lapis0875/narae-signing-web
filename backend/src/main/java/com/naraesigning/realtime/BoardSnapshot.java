@@ -1,14 +1,16 @@
 package com.naraesigning.realtime;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.naraesigning.board.core.SignatureInkColor;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 
 record BoardSnapshot(UUID boardId, int canvasWidth, int canvasHeight, boolean backgroundPresent,
+        SignatureInkColor signatureInkColor,
         List<Slot> slots) {
     record Slot(UUID id, BigDecimal x, BigDecimal y, BigDecimal width, BigDecimal height,
-            String background, JsonNode signature, JsonNode draftSignature, long draftEpoch, long revision) {
+            JsonNode signature, JsonNode draftSignature, long draftEpoch, long revision) {
         boolean isNewerThan(long epoch, long comparedRevision) {
             return draftEpoch > epoch || (draftEpoch == epoch && revision > comparedRevision);
         }

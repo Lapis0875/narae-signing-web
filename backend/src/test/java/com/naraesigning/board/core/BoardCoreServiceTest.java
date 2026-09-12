@@ -45,6 +45,8 @@ final class BoardCoreServiceTest {
         // Then: token is private, random, current, encrypted at rest, and hash-resolvable.
         assertThat(created.shareToken()).hasSize(43).doesNotContain("=");
         assertThat(created.board().status()).isEqualTo("설정 중");
+        assertThat(created.board().signatureInkColor()).isEqualTo(SignatureInkColor.BLACK);
+        assertThat(repository.stored(created.board().id()).signatureInkColor()).isEqualTo(SignatureInkColor.BLACK);
         assertThat(boards.currentShare(OWNER_A, created.board().id())).isEqualTo(created.shareToken());
         assertThat(repository.findPublicByLookupHash(BoardShareToken.lookupHash(created.shareToken())))
                 .isPresent();

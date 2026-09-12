@@ -36,5 +36,4 @@ record StoredSlot(
         BigDecimal y,
         BigDecimal width,
         BigDecimal height,
-        String backgroundColor,
         long revision) {}

@@ -1,6 +1,7 @@
 package com.naraesigning.render;
 
 import com.naraesigning.crypto.EncryptedValue;
+import com.naraesigning.board.core.SignatureInkColor;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Objects;
@@ -13,10 +14,12 @@ interface FinalPngSnapshotRepository {
 record FinalPngSnapshot(
         int width,
         int height,
+        SignatureInkColor signatureInkColor,
         FinalPngBackground background,
         List<FinalPngEncryptedSlot> slots) {
     FinalPngSnapshot {
         if (width < 1 || height < 1) throw FinalPngException.unavailable();
+        if (signatureInkColor == null) throw FinalPngException.unavailable();
         slots = List.copyOf(slots);
     }
 }
@@ -34,7 +37,6 @@ record FinalPngEncryptedSlot(
         BigDecimal y,
         BigDecimal width,
         BigDecimal height,
-        boolean white,
         EncryptedValue strokes) {
     FinalPngEncryptedSlot {
         Objects.requireNonNull(slotId, "slotId");

@@ -7,6 +7,7 @@ export const boardSchema = z.strictObject({
   createdAt: z.iso.datetime(),
   id: z.uuid(),
   shareLinkVersion: z.number().int().positive(),
+  signatureInkColor: z.enum(["black", "white"]),
   status: z.enum(["설정 중", "서명 진행", "마감/보관"]),
   title: z.string().min(1),
   updatedAt: z.iso.datetime(),

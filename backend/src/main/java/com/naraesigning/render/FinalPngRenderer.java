@@ -1,5 +1,6 @@
 package com.naraesigning.render;
 
+import com.naraesigning.board.core.SignatureInkColor;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.RenderingHints;
@@ -25,6 +26,7 @@ final class FinalPngRenderer {
                 graphics.drawImage(canvas.background(), 0, 0, canvas.width(), canvas.height(), null);
             }
             graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            graphics.setColor(canvas.signatureInkColor() == SignatureInkColor.WHITE ? Color.WHITE : Color.BLACK);
             for (var slot : canvas.slots()) renderSlot(graphics, canvas, slot);
         } finally {
             graphics.dispose();
@@ -39,12 +41,7 @@ final class FinalPngRenderer {
         var bottom = edge(slot.y().add(slot.height()), canvas.height());
         var width = Math.max(1, right - left);
         var height = Math.max(1, bottom - top);
-        if (slot.white()) {
-            graphics.setColor(Color.WHITE);
-            graphics.fillRect(left, top, width, height);
-        }
         var lineWidth = Math.max(1, (int) Math.floor(Math.min(width, height) * 0.012d + 0.5d));
-        graphics.setColor(Color.BLACK);
         graphics.setStroke(new BasicStroke(lineWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
         var inset = Math.min(lineWidth / 2d, Math.min(width, height) / 2d);
         for (var stroke : slot.strokes()) {
@@ -73,13 +70,15 @@ final class FinalPngRenderer {
     }
 }
 
-record FinalPngCanvas(int width, int height, BufferedImage background, List<FinalPngSlot> slots) {
+record FinalPngCanvas(
+        int width, int height, BufferedImage background, SignatureInkColor signatureInkColor,
+        List<FinalPngSlot> slots) {
     FinalPngCanvas { slots = List.copyOf(slots); }
 }
 
 record FinalPngSlot(
         BigDecimal x, BigDecimal y, BigDecimal width, BigDecimal height,
-        boolean white, List<FinalPngStroke> strokes) {
+        List<FinalPngStroke> strokes) {
     FinalPngSlot { strokes = List.copyOf(strokes); }
 }
 

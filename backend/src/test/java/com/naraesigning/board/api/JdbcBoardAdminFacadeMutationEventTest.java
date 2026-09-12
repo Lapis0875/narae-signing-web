@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -18,9 +19,9 @@ import com.naraesigning.board.core.BoardOwner;
 import com.naraesigning.board.core.BoardService;
 import com.naraesigning.board.core.BoardShare;
 import com.naraesigning.board.core.BoardView;
+import com.naraesigning.board.core.SignatureInkColor;
 import com.naraesigning.realtime.DraftDelta;
 import com.naraesigning.realtime.LiveSignatureRegistry;
-import com.naraesigning.slot.SlotBackground;
 import com.naraesigning.slot.SlotBounds;
 import com.naraesigning.slot.SlotService;
 import java.lang.reflect.Method;
@@ -76,7 +77,14 @@ final class JdbcBoardAdminFacadeMutationEventTest {
         });
         doReturn("DRAFT").when(jdbc).query(anyString(), any(ResultSetExtractor.class), eq(BOARD));
         when(boards.detail(any(), eq(BOARD))).thenReturn(new BoardView(
-                BOARD, "Board", "설정 중", 800, 600, 1, Instant.EPOCH, Instant.EPOCH));
+                BOARD, "Board", "설정 중", 800, 600, SignatureInkColor.BLACK,
+                1, Instant.EPOCH, Instant.EPOCH));
+        when(boards.lock(any(), eq(BOARD))).thenReturn(new BoardView(
+                BOARD, "Board", "설정 중", 800, 600, SignatureInkColor.BLACK,
+                1, Instant.EPOCH, Instant.EPOCH));
+        when(boards.patchLocked(any(), eq(BOARD), anyString(), eq(true), isNull(), eq(false)))
+                .thenReturn(new BoardView(BOARD, "Renamed", "설정 중", 800, 600,
+                        SignatureInkColor.BLACK, 1, Instant.EPOCH, Instant.EPOCH));
         facade = new JdbcBoardAdminFacade(boards, slots, backgrounds, jdbc, transactions, publisher,
                 drafts);
     }
@@ -84,27 +92,48 @@ final class JdbcBoardAdminFacadeMutationEventTest {
     @Test
     void eachMutationPublishesItsMinimalEventOnlyAfterCommit() throws Exception {
         // Given / When / Then
-        assertAfterCommit("layout-updated", () -> facade.updateSlot(owner(), BOARD, SLOT, bounds(), SlotBackground.WHITE));
+        assertAfterCommit("layout-updated", () -> facade.updateSlot(owner(), BOARD, SLOT, bounds()));
         assertAfterCommit("layout-updated", () -> facade.deleteSlot(owner(), BOARD, SLOT));
         assertAfterCommit("signature-reset", () -> facade.resetSignature(owner(), BOARD, SLOT));
         assertAfterCommit("background-updated", () -> facade.replaceBackground(
                 owner(), BOARD, new byte[] {1}, "image/png", new CanvasChange(false, false)));
-        assertAfterCommit("board-updated", () -> facade.rename(owner(), BOARD, "Renamed"));
+        assertAfterCommit("board-updated", () -> facade.patch(owner(), BOARD,
+                new BoardPatch("Renamed", true, null, false)));
     }
 
     @Test
     void failedAndRolledBackMutationsPublishNothing() {
         // Given
         doThrow(new IllegalStateException("write failed")).when(slots)
-                .updateVisual(eq(BOARD), eq(SLOT), any(), eq(SlotBackground.WHITE));
+                .updateVisual(eq(BOARD), eq(SLOT), any());
 
         // When / Then
-        assertThatThrownBy(() -> facade.updateSlot(owner(), BOARD, SLOT, bounds(), SlotBackground.WHITE))
+        assertThatThrownBy(() -> facade.updateSlot(owner(), BOARD, SLOT, bounds()))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(published).isEmpty();
         assertThat(transactions.pendingCount()).isZero();
 
         facade.deleteSlot(owner(), BOARD, SLOT);
+        transactions.rollback();
+        assertThat(published).isEmpty();
+    }
+
+    @Test
+    void colorPatchFailureOrRollbackPublishesNoBoardUpdatedEvent() {
+        when(backgrounds.hasCurrent(BOARD)).thenReturn(true);
+        doThrow(new IllegalStateException("save failed")).when(boards)
+                .patchLocked(any(), eq(BOARD), isNull(), eq(false), eq(SignatureInkColor.WHITE), eq(true));
+
+        assertThatThrownBy(() -> facade.patch(owner(), BOARD,
+                new BoardPatch(null, false, SignatureInkColor.WHITE, true)))
+                .isInstanceOf(IllegalStateException.class).hasMessage("save failed");
+        assertThat(published).isEmpty();
+        assertThat(transactions.pendingCount()).isZero();
+
+        doReturn(new BoardView(BOARD, "Board", "설정 중", 800, 600,
+                SignatureInkColor.WHITE, 1, Instant.EPOCH, Instant.EPOCH)).when(boards)
+                .patchLocked(any(), eq(BOARD), isNull(), eq(false), eq(SignatureInkColor.WHITE), eq(true));
+        facade.patch(owner(), BOARD, new BoardPatch(null, false, SignatureInkColor.WHITE, true));
         transactions.rollback();
         assertThat(published).isEmpty();
     }
@@ -184,7 +213,9 @@ final class JdbcBoardAdminFacadeMutationEventTest {
     @Test
     void closeFencesCachedDraftsBeforeWritingTheTerminalStatus() {
         // Given
-        doReturn("OPEN").when(jdbc).query(anyString(), any(ResultSetExtractor.class), eq(BOARD));
+        when(boards.lock(any(), eq(BOARD))).thenReturn(new BoardView(
+                BOARD, "Board", "서명 진행", 800, 600, SignatureInkColor.BLACK,
+                1, Instant.EPOCH, Instant.EPOCH));
         doReturn(1).when(jdbc).update(anyString(), eq("CLOSED"), eq(BOARD), eq("OPEN"));
 
         // When

@@ -1,15 +1,18 @@
 package com.naraesigning.board.api;
 
+import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.naraesigning.background.CanvasChange;
 import com.naraesigning.board.core.BoardOwner;
+import com.naraesigning.board.core.InvalidBoardTitleException;
+import com.naraesigning.board.core.SignatureInkColor;
 import com.naraesigning.realtime.PublicBoardRealtimeRegistry;
 import com.naraesigning.realtime.PublicDisplayLeaseRegistry;
-import com.naraesigning.slot.SlotBackground;
 import com.naraesigning.slot.SlotBounds;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
@@ -46,23 +49,27 @@ final class BoardAdminController {
 
     @GetMapping Object list(HttpServletRequest request) { return facade.list(owner(request)); }
 
-    @PostMapping Object create(@RequestBody TitleBody body, HttpServletRequest request) {
-        return facade.create(owner(request), body.validTitle());
+    @PostMapping Object create(@RequestBody JsonNode body, HttpServletRequest request) {
+        if (!body.isObject() || body.size() != 1 || !body.has("title")) {
+            throw new IllegalArgumentException("invalid create body");
+        }
+        var title = body.get("title");
+        return facade.create(owner(request), title.isTextual() ? title.textValue() : null);
     }
 
     @GetMapping("/{boardId}") Object detail(@PathVariable UUID boardId, HttpServletRequest request) {
         return facade.detail(owner(request), boardId);
     }
 
-    @PatchMapping("/{boardId}") Object rename(@PathVariable UUID boardId, @RequestBody TitleBody body,
+    @PatchMapping("/{boardId}") Object patch(@PathVariable UUID boardId, @RequestBody JsonNode body,
             HttpServletRequest request) {
-        return facade.rename(owner(request), boardId, body.validTitle());
+        return facade.patch(owner(request), boardId, boardPatch(body));
     }
 
     @PatchMapping("/{boardId}/slots/{slotId}") Object updateSlot(@PathVariable UUID boardId,
             @PathVariable UUID slotId, @RequestBody SlotBody body, HttpServletRequest request) {
         return facade.updateSlot(owner(request), boardId, slotId,
-                SlotBounds.of(body.x(), body.y(), body.width(), body.height()), background(body.background()));
+                SlotBounds.of(body.x(), body.y(), body.width(), body.height()));
     }
 
     @DeleteMapping("/{boardId}/slots/{slotId}") ResponseEntity<Void> deleteSlot(@PathVariable UUID boardId,
@@ -127,19 +134,43 @@ final class BoardAdminController {
         return (BoardOwner) request.getAttribute(AdminBoardFilter.OWNER_ATTRIBUTE);
     }
 
-    private static SlotBackground background(String value) {
-        try {
-            return SlotBackground.valueOf(value.toUpperCase(Locale.ROOT));
-        } catch (RuntimeException exception) {
-            throw new BoardLifecycleException("SLOT_BACKGROUND_INVALID");
+    private static BoardPatch boardPatch(JsonNode body) {
+        if (!body.isObject()) throw new IllegalArgumentException("invalid board patch body");
+        if (body.isEmpty()) throw new BoardPatchInputException("BOARD_PATCH_EMPTY");
+        for (var field : body.properties()) {
+            if (!Set.of("title", "signatureInkColor").contains(field.getKey())) {
+                throw new IllegalArgumentException("unknown board patch field");
+            }
         }
+        boolean titlePresent = body.has("title");
+        String title = titlePresent && body.get("title").isTextual() ? body.get("title").textValue() : null;
+        boolean colorPresent = body.has("signatureInkColor");
+        SignatureInkColor color = colorPresent ? signatureInkColor(body.get("signatureInkColor")) : null;
+        if (titlePresent && (title == null || title.isBlank()
+                || title.codePointCount(0, title.length()) > 120
+                || title.codePoints().anyMatch(codePoint -> codePoint >= 0xd800 && codePoint <= 0xdfff))) {
+            throw new InvalidBoardTitleException();
+        }
+        return new BoardPatch(title, titlePresent, color, colorPresent);
     }
 
-    record TitleBody(String title, UUID ownerId, String status) {
-        String validTitle() {
-            if (ownerId != null || status != null) throw new IllegalArgumentException("client-owned board fields");
-            return title;
+    private static SignatureInkColor signatureInkColor(JsonNode value) {
+        if (value != null && value.isTextual()) {
+            if ("black".equals(value.textValue())) return SignatureInkColor.BLACK;
+            if ("white".equals(value.textValue())) return SignatureInkColor.WHITE;
+        }
+        throw new BoardPatchInputException("SIGNATURE_INK_COLOR_INVALID");
+    }
+    record SlotBody(BigDecimal x, BigDecimal y, BigDecimal width, BigDecimal height) {
+        SlotBody {
+            if (x == null || y == null || width == null || height == null) {
+                throw new IllegalArgumentException("missing slot geometry");
+            }
+        }
+
+        @JsonAnySetter
+        void rejectUnknownField(String field, JsonNode value) {
+            throw new IllegalArgumentException("unknown slot patch field");
         }
     }
-    record SlotBody(BigDecimal x, BigDecimal y, BigDecimal width, BigDecimal height, String background) {}
 }

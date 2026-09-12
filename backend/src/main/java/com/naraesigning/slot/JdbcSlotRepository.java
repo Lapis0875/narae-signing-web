@@ -11,7 +11,7 @@ import org.springframework.transaction.support.TransactionOperations;
 final class JdbcSlotRepository implements SlotRepository {
     private static final String SLOT_COLUMNS = """
             r.board_id, s.id, s.roster_entry_id, s.placement_status, s.x, s.y,
-            s.width, s.height, s.background_color, s.slot_revision, r.submitted,
+            s.width, s.height, s.slot_revision, r.submitted,
             (s.encrypted_strokes is not null) signature_present
             """;
     private final JdbcOperations jdbc;
@@ -61,7 +61,6 @@ final class JdbcSlotRepository implements SlotRepository {
                 resultSet.getBigDecimal("width"), resultSet.getBigDecimal("height")) : null;
         return new Slot(resultSet.getObject("board_id", UUID.class), resultSet.getObject("id", UUID.class),
                 resultSet.getObject("roster_entry_id", UUID.class), bounds,
-                SlotBackground.fromDatabase(resultSet.getString("background_color")),
                 resultSet.getLong("slot_revision"), resultSet.getBoolean("submitted"),
                 resultSet.getBoolean("signature_present"));
     }
@@ -110,19 +109,19 @@ final class JdbcSlotRepository implements SlotRepository {
         private void saveVisual(Slot slot) {
             requireSingleUpdate(jdbc.update("""
                     update signature_slot set placement_status = 'PLACED', x = ?, y = ?,
-                        width = ?, height = ?, background_color = ?, slot_revision = ? where id = ?
+                        width = ?, height = ?, slot_revision = ? where id = ?
                     """, slot.bounds().x(), slot.bounds().y(), slot.bounds().width(), slot.bounds().height(),
-                    slot.background().databaseValue(), slot.revision(), slot.id()));
+                    slot.revision(), slot.id()));
         }
 
         private void clearSignature(Slot slot, boolean deletePlacement) {
             if (deletePlacement) {
                 requireSingleUpdate(jdbc.update("""
                         update signature_slot set placement_status = 'UNPLACED', x = null, y = null,
-                            width = null, height = null, background_color = ?, encrypted_strokes = null,
+                            width = null, height = null, encrypted_strokes = null,
                             strokes_nonce = null, strokes_key_version = null, submitted_at = null,
                             slot_revision = ? where id = ?
-                        """, slot.background().databaseValue(), slot.revision(), slot.id()));
+                        """, slot.revision(), slot.id()));
             } else {
                 requireSingleUpdate(jdbc.update("""
                         update signature_slot set encrypted_strokes = null, strokes_nonce = null,

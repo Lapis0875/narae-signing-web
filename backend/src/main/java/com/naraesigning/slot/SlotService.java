@@ -12,11 +12,10 @@ public final class SlotService {
         this.repository = repository;
     }
 
-    public Slot updateVisual(UUID boardId, UUID slotId, SlotBounds bounds, SlotBackground background) {
+    public Slot updateVisual(UUID boardId, UUID slotId, SlotBounds bounds) {
         Objects.requireNonNull(bounds, "bounds");
-        Objects.requireNonNull(background, "background");
         return repository.withLockedLayout(boardId, locked -> {
-            var changed = required(locked.slots(), slotId).withVisual(bounds, background);
+            var changed = required(locked.slots(), slotId).withVisual(bounds);
             changed.aspect(locked.canvas());
             validateProspectiveLayout(locked.slots(), changed);
             locked.save(changed, SlotWrite.VISUAL);

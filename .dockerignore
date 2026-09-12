@@ -1,0 +1,13 @@
+# Host dependencies must not overlay the image's npm ci output.
+frontend/node_modules/
+node_modules/
+
+# Generated frontend/build and QA evidence are not part of the build context.
+frontend/dist/
+dist/
+test-results/
+scripts/fixtures/__pycache__/
+.omo/
+
+# Repository metadata is not needed by either image build.
+.git/

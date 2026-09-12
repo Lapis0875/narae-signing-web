@@ -74,7 +74,7 @@ final class MvpFlowFixture {
     static void place(JdbcTemplate jdbc, UUID slotId, String x, String y, String width, String height) {
         jdbc.update("""
                 update signature_slot set placement_status='PLACED', x=?::numeric, y=?::numeric,
-                    width=?::numeric, height=?::numeric, background_color='transparent', slot_revision=1
+                    width=?::numeric, height=?::numeric, slot_revision=1
                 where id=?
                 """, x, y, width, height, slotId);
     }
@@ -148,8 +148,8 @@ final class MvpFlowFixture {
                 values (?,?,?,?,1,?)
                 """, rosterId, BOARD, bytes(marker), bytes(marker + 1), bytes(marker + 2));
         jdbc.update("""
-                insert into signature_slot(id,roster_entry_id,placement_status,background_color)
-                values (?,?,'UNPLACED','transparent')
+                insert into signature_slot(id,roster_entry_id,placement_status)
+                values (?,?,'UNPLACED')
                 """, slotId, rosterId);
     }
 

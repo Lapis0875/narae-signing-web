@@ -55,7 +55,7 @@ class JdbcSlotRepositoryTest {
     }
 
     @Test
-    void productionDeletePersistsUnplacedTransparentGeometryClearAndRevisionIncrement() {
+    void productionDeletePersistsUnplacedGeometryClearAndRevisionIncrement() {
         // Given
         var current = slot(LOWER_SLOT_ID).withSubmissionState(true, true);
         var fixture = fixture(List.of(current));
@@ -69,11 +69,11 @@ class JdbcSlotRepositoryTest {
         assertThat(fixture.committedWrites()).first().satisfies(write -> {
             assertThat(write.sql()).contains("placement_status = 'UNPLACED'", "x = null", "y = null",
                     "width = null", "height = null", "encrypted_strokes = null", "slot_revision = ?");
-            assertThat(write.parameters()).containsExactly("transparent", 8L, LOWER_SLOT_ID);
+            assertThat(write.parameters()).containsExactly(8L, LOWER_SLOT_ID);
         });
         assertThat(fixture.committedWrites()).element(1).satisfies(write ->
                 assertThat(write.sql()).contains("update roster_entry set submitted = false"));
-        System.out.println("QA jdbc_delete placement=UNPLACED background=transparent geometry=clear revision=8");
+        System.out.println("QA jdbc_delete placement=UNPLACED geometry=clear revision=8");
     }
 
     @Test
@@ -98,7 +98,7 @@ class JdbcSlotRepositoryTest {
     private static Slot slot(UUID slotId) {
         return new Slot(BOARD_ID, slotId, UUID.fromString("30000000-0000-0000-0000-000000000001"),
                 SlotBounds.of(decimal("0.1"), decimal("0.2"), decimal("0.3"), decimal("0.4")),
-                SlotBackground.WHITE, 7, false, false);
+                7, false, false);
     }
 
     private static BigDecimal decimal(String value) {

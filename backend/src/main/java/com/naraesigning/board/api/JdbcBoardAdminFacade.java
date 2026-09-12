@@ -10,10 +10,10 @@ import com.naraesigning.board.core.BoardService;
 import com.naraesigning.board.core.BoardShare;
 import com.naraesigning.board.core.BoardView;
 import com.naraesigning.board.core.CreatedBoard;
+import com.naraesigning.board.core.SignatureInkColor;
 import com.naraesigning.realtime.BoardMutationEvent;
 import com.naraesigning.realtime.LiveSignatureRegistry;
 import com.naraesigning.slot.Slot;
-import com.naraesigning.slot.SlotBackground;
 import com.naraesigning.slot.SlotBounds;
 import com.naraesigning.slot.SlotService;
 import java.util.List;
@@ -50,20 +50,28 @@ final class JdbcBoardAdminFacade implements BoardAdminFacade {
     @Override public List<BoardView> list(BoardOwner owner) { return boards.list(owner); }
     @Override public CreatedBoard create(BoardOwner owner, String title) { return boards.create(owner, title); }
     @Override public BoardView detail(BoardOwner owner, UUID boardId) { return boards.detail(owner, boardId); }
-    @Override public BoardView rename(BoardOwner owner, UUID boardId, String title) {
+    @Override public BoardView patch(BoardOwner owner, UUID boardId, BoardPatch patch) {
         return transactions.execute(status -> {
-            var renamed = boards.rename(owner, boardId, title);
+            var current = boards.lock(owner, boardId);
+            if (patch.signatureInkColorPresent()) {
+                if (!"설정 중".equals(current.status())) throw new BoardLifecycleException("BOARD_NOT_DRAFT");
+                if (patch.signatureInkColor() == SignatureInkColor.WHITE
+                        && !backgrounds.hasCurrent(boardId)) {
+                    throw new BoardLifecycleException("SIGNATURE_INK_BACKGROUND_REQUIRED");
+                }
+            }
+            var updated = boards.patchLocked(owner, boardId, patch.title(), patch.titlePresent(),
+                    patch.signatureInkColor(), patch.signatureInkColorPresent());
             publishAfterCommit(new BoardMutationEvent(boardId, "board-updated"));
-            return renamed;
+            return updated;
         });
     }
 
     @Override
-    public Slot updateSlot(BoardOwner owner, UUID boardId, UUID slotId,
-            SlotBounds bounds, SlotBackground background) {
+    public Slot updateSlot(BoardOwner owner, UUID boardId, UUID slotId, SlotBounds bounds) {
         return transactions.execute(status -> {
             requireEditable(owner, boardId);
-            var updated = slots.updateVisual(boardId, slotId, bounds, background);
+            var updated = slots.updateVisual(boardId, slotId, bounds);
             publishAfterCommit(new BoardMutationEvent(boardId, "layout-updated"));
             return updated;
         });
@@ -104,7 +112,7 @@ final class JdbcBoardAdminFacade implements BoardAdminFacade {
     public BackgroundAssetView replaceBackground(BoardOwner owner, UUID boardId, byte[] bytes,
             String mimeType, CanvasChange change) {
         return transactions.execute(status -> {
-            var board = boards.detail(owner, boardId);
+            var board = boards.lock(owner, boardId);
             if (!"설정 중".equals(board.status())) throw new BoardLifecycleException("BOARD_NOT_DRAFT");
             var replaced = backgrounds.replace(boardId, bytes, mimeType,
                     new CanvasSize(board.canvasWidth(), board.canvasHeight()), change);
@@ -142,11 +150,13 @@ final class JdbcBoardAdminFacade implements BoardAdminFacade {
     private BoardView transition(BoardOwner owner, UUID boardId, String expected, String changed,
             boolean requireCompleteLayout) {
         return transactions.execute(transaction -> {
-            var board = boards.detail(owner, boardId);
-            var current = jdbc.query("select status from board where id = ? for update",
-                    result -> result.next() ? result.getString(1) : null, boardId);
+            var board = boards.lock(owner, boardId);
+            var current = databaseStatus(board.status());
             if (!expected.equals(current)) throw new BoardLifecycleException("BOARD_STATE_CONFLICT");
-            if (requireCompleteLayout) requireOpenPrerequisites(boardId, board.title());
+            if (requireCompleteLayout) {
+                requireBackgroundForWhiteInk(boardId, board);
+                requireOpenPrerequisites(boardId, board.title());
+            }
             if ("CLOSED".equals(changed)) fenceDraftsUntilCompletion(boardId);
             if (jdbc.update("update board set status = ?, updated_at = current_timestamp where id = ? and status = ?",
                     changed, boardId, expected) != 1) {
@@ -155,6 +165,21 @@ final class JdbcBoardAdminFacade implements BoardAdminFacade {
             publishAfterCommit(new BoardLifecycleEvent(boardId, changed));
             return boards.detail(owner, boardId);
         });
+    }
+
+    private static String databaseStatus(String label) {
+        return switch (label) {
+            case "설정 중" -> "DRAFT";
+            case "서명 진행" -> "OPEN";
+            case "마감/보관" -> "CLOSED";
+            default -> throw new BoardLifecycleException("BOARD_STATE_CONFLICT");
+        };
+    }
+
+    private void requireBackgroundForWhiteInk(UUID boardId, BoardView board) {
+        if (board.signatureInkColor() == SignatureInkColor.WHITE && !backgrounds.hasCurrent(boardId)) {
+            throw new BoardLifecycleException("SIGNATURE_INK_BACKGROUND_REQUIRED");
+        }
     }
 
     private void requireOpenPrerequisites(UUID boardId, String title) {

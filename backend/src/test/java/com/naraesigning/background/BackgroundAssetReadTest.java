@@ -1,6 +1,9 @@
 package com.naraesigning.background;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import com.naraesigning.crypto.VersionedCryptoService;
 import java.awt.image.BufferedImage;
@@ -17,6 +20,23 @@ import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionOperations;
 
 final class BackgroundAssetReadTest {
+    @Test
+    void metadataPresenceDoesNotDecryptOrReadObjectContent() {
+        var boardId = UUID.randomUUID();
+        var repository = mock(BackgroundAssetRepository.class);
+        var objects = mock(BackgroundObjectStore.class);
+        var crypto = mock(VersionedCryptoService.class);
+        var service = new BackgroundAssetService(new BackgroundImageProcessor(), objects, repository,
+                crypto, transactions());
+        when(repository.current(boardId)).thenReturn(Optional.empty())
+                .thenReturn(Optional.of(new StoredBackgroundAsset(UUID.randomUUID(), boardId,
+                        null, 16, 9, "image/png")));
+
+        assertThat(service.hasCurrent(boardId)).isFalse();
+        assertThat(service.hasCurrent(boardId)).isTrue();
+        verifyNoInteractions(objects, crypto);
+    }
+
     @Test
     void readsCurrentEncryptedAssetAsPrivateImageAndMissingIsEmpty() throws Exception {
         var boardId = UUID.randomUUID();

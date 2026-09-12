@@ -60,6 +60,10 @@ public final class BackgroundAssetService {
         return repository.current(boardId).map(this::read);
     }
 
+    public boolean hasCurrent(UUID boardId) {
+        return repository.current(boardId).isPresent();
+    }
+
     private BackgroundContent read(StoredBackgroundAsset asset) {
         byte[] objectKey = null;
         byte[] envelope = null;

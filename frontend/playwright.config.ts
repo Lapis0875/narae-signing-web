@@ -7,6 +7,7 @@ export default defineConfig({
     { name: "webkit", use: { ...devices["Desktop Safari"] } },
   ],
   testDir: "./e2e",
+  testIgnore: ["**/board-signature-ink-color.driver-observability.test.ts"],
   use: {
     baseURL: "http://127.0.0.1:4173",
     screenshot: "on",
