@@ -41,7 +41,7 @@ fail() {
 
 register_recovery_only() {
     umask 077
-    python3 - "$root" "$recovery_root" "$recovery_source_registry" \
+    exec python3 - "$root" "$recovery_root" "$recovery_source_registry" \
         "$recovery_expected_digest" "$recovery_source_revision" "$recovery_profile" "$evidence_dir/recovery-registration.json" <<'PY'
 import hashlib
 import json
@@ -54,6 +54,20 @@ import subprocess
 import sys
 import tempfile
 import time
+
+cancelled_signal = 0
+
+def interrupt_registration(signum, _frame):
+    global cancelled_signal
+    if not cancelled_signal:
+        cancelled_signal = signum
+
+def check_cancelled():
+    if cancelled_signal:
+        raise InterruptedError(f"recovery registration cancelled by signal {cancelled_signal}")
+
+signal.signal(signal.SIGTERM, interrupt_registration)
+signal.signal(signal.SIGINT, interrupt_registration)
 
 worktree, root_arg, registry_arg, expected_digest, source_revision, profile, record_arg = sys.argv[1:]
 worktree = pathlib.Path(worktree)
@@ -79,7 +93,15 @@ historical = {
     "parentInode": 53537484,
 }
 
-if not re.fullmatch(r"/(?:private/)?tmp/narae-ink-color-qa\.[0-9a-f]{16}", root_arg):
+mount_proof = None
+if profile == "synthetic-mount-test":
+    mount_check = subprocess.run(
+        ["bash", str(worktree / "scripts/fixtures/verify-ink-color-recovery-mount.sh"), root_arg,
+         os.environ.get("INK_QA_RECOVERY_MOUNT_RECEIPT", "")],
+        capture_output=True, text=True, check=True, timeout=20,
+    )
+    mount_proof = json.loads(mount_check.stdout)
+elif not re.fullmatch(r"/(?:private/)?tmp/narae-ink-color-qa\.[0-9a-f]{16}", root_arg):
     raise SystemExit("recovery root is outside the exact task namespace")
 if root_arg != str(root.absolute()) or ".." in root.parts:
     raise SystemExit("recovery root is not one explicit absolute literal path")
@@ -97,7 +119,7 @@ current_head = subprocess.run(
 if profile == "historical-r2":
     if root_arg != historical["root"] or source_revision != historical["sourceRevision"] or expected_digest != historical["registryDigest"]:
         raise SystemExit("historical r2 recovery provenance does not match the fixed identity")
-elif profile == "synthetic-test":
+elif profile in {"synthetic-test", "synthetic-mount-test"}:
     docker_host = os.environ.get("DOCKER_HOST", "")
     if os.environ.get("INK_QA_RECOVERY_SYNTHETIC_TEST") != "1" or not docker_host.endswith("/host-docker-must-not-exist.sock") or pathlib.Path(docker_host.removeprefix("unix://")).exists():
         raise SystemExit("synthetic recovery profile requires the isolated nonexistent fake-engine boundary")
@@ -132,6 +154,7 @@ root_fd = -1
 marker_fd = -1
 temporary = None
 try:
+    check_cancelled()
     source_bytes = os.read(registry_fd, 1024 * 1024 + 1)
     if len(source_bytes) > 1024 * 1024 or hashlib.sha256(source_bytes).hexdigest() != expected_digest:
         raise ValueError("source registry digest changed")
@@ -196,7 +219,8 @@ try:
 
     parent = root.parent
     parent_info = parent.lstat()
-    if parent.is_symlink() or not stat.S_ISDIR(parent_info.st_mode) or str(parent) not in {"/private/tmp", "/tmp"}:
+    allowed_parent = str(parent) == mount_proof["mountpoint"] if mount_proof else str(parent) in {"/private/tmp", "/tmp"}
+    if parent.is_symlink() or not stat.S_ISDIR(parent_info.st_mode) or not allowed_parent:
         raise ValueError("recovery parent identity is invalid")
     root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     root_info = os.fstat(root_fd)
@@ -244,6 +268,7 @@ try:
     )
     for kind in ("container", "network", "volume", "image"):
         for selector, filter_value in selectors:
+            check_cancelled()
             argv = ["docker", kind, "ls"]
             if kind == "container":
                 argv.append("-a")
@@ -255,6 +280,7 @@ try:
             if completed.stderr or completed.stdout.split():
                 raise ValueError(f"fresh {kind} {selector} query was not empty")
             query_observations.append({"kind": kind, "selector": selector, "candidateCount": 0, "exitCode": 0})
+            check_cancelled()
 
     os.lseek(registry_fd, 0, os.SEEK_SET)
     if hashlib.sha256(os.read(registry_fd, 1024 * 1024 + 1)).hexdigest() != expected_digest:
@@ -306,13 +332,9 @@ try:
     }
     if record.exists() or record.is_symlink():
         raise ValueError("recovery registration already exists")
-    def interrupt_registration(signum, _frame):
-        raise InterruptedError(f"recovery registration interrupted by signal {signum}")
-
-    signal.signal(signal.SIGTERM, interrupt_registration)
-    signal.signal(signal.SIGINT, interrupt_registration)
-    fd, temporary = tempfile.mkstemp(prefix=".recovery-registration.", dir=record.parent)
+    check_cancelled()
     try:
+        fd, temporary = tempfile.mkstemp(prefix=".recovery-registration.", dir=record.parent)
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             json.dump(payload, stream, separators=(",", ":"), sort_keys=True)
@@ -322,7 +344,13 @@ try:
         if os.environ.get("INK_QA_RECOVERY_INTERRUPT_STAGE") == "before-publish":
             raise InterruptedError("recovery registration interrupted before publish")
         if os.environ.get("INK_QA_RECOVERY_INTERRUPT_STAGE") == "pause-before-publish":
-            time.sleep(30)
+            deadline = time.monotonic() + 30
+            while not cancelled_signal and time.monotonic() < deadline:
+                time.sleep(0.01)
+        check_cancelled()
+        # Cancellation acknowledged here prevents publication. A signal concurrent
+        # with link may leave the complete sealed record; link and signal delivery
+        # are not one atomic operation. Never delete an already published record.
         os.link(temporary, record, follow_symlinks=False)
         directory_fd = os.open(record.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
@@ -332,7 +360,9 @@ try:
         if os.environ.get("INK_QA_RECOVERY_INTERRUPT_STAGE") == "after-publish":
             raise InterruptedError("recovery registration interrupted after atomic publish")
         if os.environ.get("INK_QA_RECOVERY_INTERRUPT_STAGE") == "pause-after-publish":
-            time.sleep(30)
+            deadline = time.monotonic() + 30
+            while not cancelled_signal and time.monotonic() < deadline:
+                time.sleep(0.01)
     finally:
         if temporary and os.path.exists(temporary):
             os.unlink(temporary)
@@ -340,8 +370,10 @@ finally:
     for fd in (marker_fd, root_fd, registry_fd):
         if fd >= 0:
             os.close(fd)
+if cancelled_signal:
+    raise SystemExit(128 + cancelled_signal)
+print("PASS: sealed registration-only recovery record published without destructive action")
 PY
-    printf 'PASS: sealed registration-only recovery record published without destructive action\n'
 }
 
 run_bounded() {

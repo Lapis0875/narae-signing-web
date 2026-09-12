@@ -63,10 +63,10 @@ PY
 
 safe_remove_recovery_root() {
     local owned_root=$1 identity_file=$2
-    python3 - "$owned_root" "$identity_file" <<'PY'
-import hashlib, json, os, pathlib, stat, sys
+    python3 - "$owned_root" "$identity_file" "$root" <<'PY'
+import hashlib, json, os, pathlib, re, stat, subprocess, sys
 
-root_arg, identity_arg = sys.argv[1:]
+root_arg, identity_arg, worktree_arg = sys.argv[1:]
 root = pathlib.Path(root_arg); identity_path = pathlib.Path(identity_arg); uid = os.getuid()
 identity_fd = os.open(identity_path, os.O_RDONLY | os.O_NOFOLLOW)
 try:
@@ -76,9 +76,14 @@ try:
     identity = json.loads(os.read(identity_fd, 1024 * 1024 + 1))
 finally:
     os.close(identity_fd)
-if identity.get("root") != root_arg or not root_arg.startswith(("/private/tmp/narae-ink-color-qa.", "/tmp/narae-ink-color-qa.")):
+mounted_fixture = False
+if os.environ.get("INK_QA_RECOVERY_MOUNT_RECEIPT"):
+    subprocess.run(["bash", str(pathlib.Path(worktree_arg) / "scripts/fixtures/verify-ink-color-recovery-mount.sh"), root_arg, os.environ["INK_QA_RECOVERY_MOUNT_RECEIPT"]], check=True, capture_output=True, timeout=20)
+    mounted_fixture = True
+if identity.get("root") != root_arg or (not mounted_fixture and not re.fullmatch(r"/(?:private/)?tmp/narae-ink-color-qa\.[0-9a-f]{16}", root_arg)) or root_arg == "/private/tmp/narae-ink-color-qa.7338ba83ee9e2d65" or root.parent.resolve(strict=True) != root.parent:
     raise ValueError("cleanup root provenance changed")
-root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+parent_fd = os.open(root.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+root_fd = os.open(root.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
 marker_fd = registry_fd = -1
 try:
     root_info = os.fstat(root_fd)
@@ -96,9 +101,9 @@ try:
     actual_registry = [registry_info.st_dev, registry_info.st_ino, registry_info.st_uid, registry_info.st_gid, stat.S_IMODE(registry_info.st_mode)]
     if actual_registry != identity["registryIdentity"] or hashlib.sha256(registry_bytes).hexdigest() != identity["registrySha256"]:
         raise ValueError("cleanup registry identity changed")
-    def subtree_identity():
+    def subtree_identity(topdown=True):
         result = []
-        for directory, names, files, directory_fd in os.fwalk(root, topdown=True, follow_symlinks=False):
+        for directory, names, files, directory_fd in os.fwalk(".", dir_fd=root_fd, topdown=topdown, follow_symlinks=False):
             directory_path = pathlib.Path(directory)
             directory_info = os.fstat(directory_fd)
             if directory_info.st_dev != root_info.st_dev or directory_info.st_uid != uid or stat.S_IMODE(directory_info.st_mode) & 0o077:
@@ -107,23 +112,24 @@ try:
                 info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
                 if stat.S_ISLNK(info.st_mode) or info.st_dev != root_info.st_dev or info.st_uid != uid or stat.S_IMODE(info.st_mode) & 0o077 or not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
                     raise ValueError("cleanup descendant identity is unsafe")
-                result.append((str((directory_path / name).relative_to(root)), info.st_dev, info.st_ino, info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)))
-        return result
+                result.append((str(directory_path / name), info.st_dev, info.st_ino, info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)))
+        return sorted(result)
     expected_subtree = subtree_identity()
     if subtree_identity() != expected_subtree:
         raise ValueError("cleanup subtree changed before teardown")
-    for _directory, names, files, directory_fd in os.fwalk(root, topdown=False, follow_symlinks=False):
-        for name in files:
-            os.unlink(name, dir_fd=directory_fd)
-        for name in names:
-            os.rmdir(name, dir_fd=directory_fd)
-    current = root.lstat()
+    if subtree_identity(topdown=False) != expected_subtree:
+        raise ValueError("cleanup subtree changed during anchored audit; retained")
+    current = os.stat(root.name, dir_fd=parent_fd, follow_symlinks=False)
     if [current.st_dev, current.st_ino, current.st_uid, current.st_gid, stat.S_IMODE(current.st_mode)] != identity["rootIdentity"]:
         raise ValueError("cleanup root changed before final removal")
+    # dir_fd binds directory lookup, but unlink/rmdir cannot compare-and-remove
+    # an expected inode. This same-UID namespace has no enforceable exclusion.
+    # Even an unchanged audit therefore authorizes retention, never deletion.
+    print(json.dumps({"outcome": "retained", "root": root_arg, "rootIdentity": actual_root, "rootMutationCount": 0, "reason": "namespace-exclusion-unavailable"}, sort_keys=True))
+    raise ValueError("cleanup namespace exclusion unavailable; root retained without mutation")
 finally:
-    for fd in (registry_fd, marker_fd, root_fd):
+    for fd in (registry_fd, marker_fd, root_fd, parent_fd):
         if fd >= 0: os.close(fd)
-os.rmdir(root)
 PY
 }
 
@@ -135,8 +141,10 @@ cleanup() {
     if [[ -n "$quiescence_probe_pid" ]]; then kill "$quiescence_probe_pid" 2>/dev/null || true; wait "$quiescence_probe_pid" 2>/dev/null || true; fi
     if [[ -n "$fake_root" && -d "$fake_root" ]]; then find "$fake_root" -depth -delete; fi
     if [[ -n "$recovery_root" && ( -e "$recovery_root" || -L "$recovery_root" ) ]]; then
-        safe_remove_recovery_root "$recovery_root" "$recovery_cleanup_identity" \
-            || printf 'REFUSED: synthetic recovery-root cleanup identity changed; retained %s\n' "$recovery_root" >&2
+        if ! safe_remove_recovery_root "$recovery_root" "$recovery_cleanup_identity" > "$evidence_dir/recovery-teardown.json" 2> "$evidence_dir/recovery-teardown.stderr"; then
+            printf 'REFUSED: synthetic recovery-root teardown retained %s\n' "$recovery_root" >&2
+            [[ $incoming -ne 0 ]] || incoming=1
+        fi
     fi
     exit "$incoming"
 }
@@ -152,6 +160,9 @@ done
     || fail "a supported test mode is required"
 [[ -n "$evidence_dir" ]] || fail "--evidence-dir is required"
 evidence_dir=$(mkdir -p "$evidence_dir" && CDPATH= cd -- "$evidence_dir" && pwd)
+if [[ ( "$mode" == --recovery-registration-tests || "$mode" == --recovery-registration-demo ) && -z "${INK_QA_RECOVERY_MOUNT_RECEIPT:-}" ]]; then
+    exec bash "$root/scripts/fixtures/test-ink-color-recovery-mount.sh" --evidence-dir "$evidence_dir"
+fi
 fake_root=$(mktemp -d "${TMPDIR:-/tmp}/ink-color-cleanup-guardrail.XXXXXX")
 chmod 700 "$fake_root"
 trap cleanup EXIT HUP INT TERM
@@ -906,14 +917,42 @@ PY
 fi
 
 if [[ "$mode" == --recovery-registration-tests || "$mode" == --recovery-registration-demo || "$mode" == --r10-red ]]; then
-    run_scenario recovery-build-failure
     scenario_dir="$evidence_dir/recovery-build-failure"
+    recovery_test_profile=synthetic-test
+    if [[ -n "${INK_QA_RECOVERY_MOUNT_RECEIPT:-}" ]]; then
+        recovery_root=$(python3 -c 'import json, os; print(json.load(open(os.environ["INK_QA_RECOVERY_MOUNT_RECEIPT"]))["root"])')
+        bash "$root/scripts/fixtures/verify-ink-color-recovery-mount.sh" "$recovery_root" "$INK_QA_RECOVERY_MOUNT_RECEIPT" > "$evidence_dir/verified-mount.json"
+        mkdir -p -m 700 "$scenario_dir/launcher"
+        python3 - "$recovery_root" "$scenario_dir/launcher/ownership-registry.json" "$fake_root/state/state.json" <<'PY'
+import json, os, pathlib, secrets, time, sys
+root, registry, state = map(pathlib.Path, sys.argv[1:])
+if list(root.iterdir()): raise SystemExit("mounted recovery fixture root is not empty")
+owner = secrets.token_hex(32); project = "ink-color-qa-" + owner[:12]
+for name, text in ((".ink-color-qa-owned", owner + "\n"), ("compose.yml", "services: {}\n")):
+    path = root / name; path.write_text(text); path.chmod(0o600)
+value = {"schemaVersion": 2, "runId": owner, "project": project, "ownerLabel": {"key": "com.naraemedia.qa.owner", "value": owner}, "createdAtEpoch": int(time.time()), "sealed": False, "resources": [], "intents": [
+    {"scope": "local", "kind": "temporary-root", "identity": str(root)},
+    {"scope": "local", "kind": "launcher-pid", "identity": "999999"},
+    {"scope": "docker", "kind": "network", "identity": project + "_default"},
+    {"scope": "docker", "kind": "volume", "identity": project + "_probe-data"},
+    {"scope": "docker", "kind": "image", "identity": project + ":probe"}]}
+registry.write_text(json.dumps(value) + "\n"); registry.chmod(0o600)
+state.write_text(json.dumps({"created": [], "started": True, "runId": owner, "project": project, "registry": str(registry), "compose": str(root / "compose.yml")}) + "\n")
+PY
+        for log in fake-docker-mutations.log fake-docker-spawns.log fake-docker-argv.log fake-signal.log; do : > "$scenario_dir/$log"; done
+        recovery_cleanup_identity="$evidence_dir/recovery-root-cleanup-identity.json"
+        capture_recovery_root_identity "$recovery_root" "$scenario_dir/launcher/ownership-registry.json" "$recovery_cleanup_identity"
+        recovery_test_profile=synthetic-mount-test
+    else
+        run_scenario recovery-build-failure
+    fi
     original_registry="$scenario_dir/launcher/ownership-registry.json"
     original_digest=$(shasum -a 256 "$original_registry" | awk '{print $1}')
     mutation_log="$scenario_dir/fake-docker-mutations.log"
 
     invoke_recovery() {
         local label=$1 source=$2 scenario=$3 interrupt=${4:-} selected_root=${5:-$recovery_root} expected=${6:-} profile=${7:-synthetic-test} source_revision=${8:-} output_dir rc=0
+        [[ "$profile" != synthetic-test ]] || profile=$recovery_test_profile
         output_dir=$(dirname "$source")
         [[ -n "$expected" ]] || expected=$(shasum -a 256 "$source" | awk '{print $1}')
         [[ -n "$source_revision" ]] || source_revision=$(git -C "$root" rev-parse HEAD)
@@ -957,7 +996,7 @@ if [[ "$mode" == --recovery-registration-tests || "$mode" == --recovery-registra
             bash "$root/scripts/fixtures/run-ink-color-qa.sh" --recovery-registration \
             --recovery-root "$recovery_root" --source-registry "$term_registry" \
             --expected-registry-sha256 "$(shasum -a 256 "$term_registry" | awk '{print $1}')" \
-            --source-revision "$(git -C "$root" rev-parse HEAD)" --recovery-profile synthetic-test \
+            --source-revision "$(git -C "$root" rev-parse HEAD)" --recovery-profile "$recovery_test_profile" \
             --evidence-dir "$term_dir" > "$term_dir/stdout" 2> "$term_dir/stderr" &
         recovery_signal_shell_pid=$!
         for _ in $(seq 1 300); do
@@ -971,8 +1010,7 @@ if [[ "$mode" == --recovery-registration-tests || "$mode" == --recovery-registra
             sleep 0.01
         done
         [[ "$child_ready" == true ]] || fail "$label did not reach the deterministic TERM boundary"
-        recovery_signal_child_pid=$(pgrep -P "$recovery_signal_shell_pid" | tail -n 1)
-        [[ -n "$recovery_signal_child_pid" ]] || fail "$label registration child was not observable"
+        recovery_signal_child_pid=$recovery_signal_shell_pid
         kill -TERM "$recovery_signal_child_pid"
         set +e
         wait "$recovery_signal_shell_pid"
@@ -1062,7 +1100,7 @@ source_path, record_path, root_path, output_path = map(pathlib.Path, sys.argv[1:
 source = json.loads(source_path.read_text())
 record = json.loads(record_path.read_text())
 required = {"schemaVersion","recordType","scope","profile","sealed","recordId","sourceRevision","implementationRevision","sourceRegistry","owner","originalIntents","unfulfilledDockerIntents","root","quiescence","dockerObservation","actions","registeredAtEpoch"}
-if set(record) != required or record["schemaVersion"] != 1 or record["recordType"] != "ink-color-recovery-registration" or record["scope"] != "registration-only" or record["profile"] != "synthetic-test" or record["sealed"] is not True:
+if set(record) != required or record["schemaVersion"] != 1 or record["recordType"] != "ink-color-recovery-registration" or record["scope"] != "registration-only" or record["profile"] not in {"synthetic-test", "synthetic-mount-test"} or record["sealed"] is not True:
     raise SystemExit("recovery record schema/seal mismatch")
 if record["originalIntents"] != source["intents"] or record["unfulfilledDockerIntents"] != [item for item in source["intents"] if item["scope"] == "docker"]:
     raise SystemExit("recovery record did not preserve original/unfulfilled intents")
@@ -1279,7 +1317,7 @@ PY
     [[ $teardown_rc -ne 0 && -L "$recovery_root" ]] || fail "symlink teardown was not retained"
     python3 - "$recovery_root" <<'PY'
 import os, sys
-os.unlink(sys.argv[1])
+os.rename(sys.argv[1], sys.argv[1] + ".symlink-observation")
 PY
     printf 'symlink-replacement\tREFUSED\tsymlink-retained\n' >> "$evidence_dir/teardown-identity.tsv"
     mkdir -m 700 "$recovery_root"
@@ -1295,8 +1333,7 @@ PY
     python3 - "$recovery_root" <<'PY'
 import os, pathlib, sys
 root = pathlib.Path(sys.argv[1])
-os.unlink(root / ".ink-color-qa-owned")
-os.rmdir(root)
+os.rename(root, str(root) + ".replacement-observation")
 PY
     mv "$held_root" "$recovery_root"
     printf 'path-replacement\tREFUSED\treplacement-retained\n' >> "$evidence_dir/teardown-identity.tsv"
