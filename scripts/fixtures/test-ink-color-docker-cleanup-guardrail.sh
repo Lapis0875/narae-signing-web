@@ -196,6 +196,117 @@ PY
     printf 'PASS: synthetic-mount-test rejected before root, receipt, mount, or Docker work\n'
     exit 0
 fi
+if [[ "$mode" == --recovery-registration-tests || "$mode" == --recovery-registration-demo ]]; then
+    reduced_root=/private/tmp/narae-ink-color-qa.1111111111111111
+    reduced_bin="$evidence_dir/reduced-recovery-bin"
+    reduced_docker_log="$evidence_dir/docker-argv.tsv"
+    reduced_mv_log="$evidence_dir/mv-argv.tsv"
+    [[ ! -e "$reduced_root" ]] || fail "reduced recovery root must remain nonexistent"
+    printf '{"action":"reduced-recovery-intent","externalRoot":false,"mount":false,"image":false,"dockerMutation":false}\n' \
+        > "$evidence_dir/resource-journal.jsonl"
+    mkdir -m 700 "$reduced_bin"
+    printf '%s\n' '#!/bin/sh' \
+        'printf '\''%s\t%s\n'\'' "${1:-}" "${2:-}" >> "$REDUCED_DOCKER_LOG"' \
+        '[ "${1:-}" = info ] && exit 0' \
+        'exit 92' > "$reduced_bin/docker"
+    printf '%s\n' '#!/bin/sh' \
+        'printf '\''%s\n'\'' "$*" >> "$REDUCED_MV_LOG"' \
+        'exit 93' > "$reduced_bin/mv"
+    chmod 700 "$reduced_bin/docker" "$reduced_bin/mv"
+
+    reduced_invoke() {
+        local label=$1 profile=$2 output rc=0
+        output="$evidence_dir/$label"
+        mkdir -m 700 "$output"
+        PATH="$reduced_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+        REDUCED_DOCKER_LOG="$reduced_docker_log" REDUCED_MV_LOG="$reduced_mv_log" \
+            /bin/bash "$root/scripts/fixtures/run-ink-color-qa.sh" --recovery-registration \
+            --recovery-root "$reduced_root" --source-registry "$evidence_dir/ownership-registry.json" \
+            --expected-registry-sha256 "$(printf '0%.0s' {1..64})" \
+            --source-revision "$(git -C "$root" rev-parse HEAD)" \
+            --recovery-profile "$profile" --evidence-dir "$output" \
+            > "$output/stdout" 2> "$output/stderr" || rc=$?
+        printf '%s\n' "$rc" > "$output/exit-code"
+        [[ $rc -ne 0 && ! -e "$output/recovery-registration.json" ]] \
+            || fail "$label did not fail closed without a record"
+    }
+
+    reduced_invoke normal-profile synthetic-test
+    grep -Fxq 'synthetic recovery profile requires the isolated nonexistent fake-engine boundary' "$evidence_dir/normal-profile/stderr" \
+        || fail "normal recovery profile lost its strict synthetic boundary"
+    reduced_invoke malformed-profile $'synthetic-test\nignored'
+    grep -Fxq 'recovery profile is invalid' "$evidence_dir/malformed-profile/stderr" \
+        || fail "malformed recovery profile was not rejected"
+    reduced_invoke historical-profile historical-r2
+    grep -Fxq 'historical r2 recovery provenance does not match the fixed identity' "$evidence_dir/historical-profile/stderr" \
+        || fail "historical recovery profile was not rejected before root access"
+    reduced_invoke disabled-profile synthetic-mount-test
+    grep -Fxq 'FAIL: recovery profile is disabled: synthetic-mount-test' "$evidence_dir/disabled-profile/stderr" \
+        || fail "disabled recovery profile was not rejected"
+
+    retention_fixture="$evidence_dir/retention-fixture"
+    retention_identity="$evidence_dir/retention-identity.json"
+    mkdir -m 700 "$retention_fixture"
+    printf '{}\n' > "$retention_identity"
+    chmod 600 "$retention_identity"
+    set +e
+    safe_remove_recovery_root "$retention_fixture" "$retention_identity" \
+        > "$evidence_dir/retention.stdout" 2> "$evidence_dir/retention.stderr"
+    retention_rc=$?
+    set -e
+    printf '%s\n' "$retention_rc" > "$evidence_dir/retention.exit-code"
+    [[ $retention_rc -ne 0 && -d "$retention_fixture" ]] \
+        || fail "generic recovery teardown did not retain under uncertain provenance"
+
+    : > "$evidence_dir/signal-matrix.tsv"
+    for signal_case in signal signal-repeat; do
+        signal_output="$evidence_dir/$signal_case"
+        signal_ready="$signal_output/ready"
+        mkdir -m 700 "$signal_output"
+        PATH="$reduced_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+        REDUCED_DOCKER_LOG="$reduced_docker_log" REDUCED_MV_LOG="$reduced_mv_log" \
+        INK_QA_RECOVERY_INTERRUPT_STAGE=pause-before-validation \
+        INK_QA_RECOVERY_SIGNAL_READY="$signal_ready" \
+            /bin/bash "$root/scripts/fixtures/run-ink-color-qa.sh" --recovery-registration \
+            --recovery-root "$reduced_root" --source-registry "$evidence_dir/ownership-registry.json" \
+            --expected-registry-sha256 "$(printf '0%.0s' {1..64})" \
+            --source-revision "$(git -C "$root" rev-parse HEAD)" \
+            --recovery-profile synthetic-test --evidence-dir "$signal_output" \
+            > "$signal_output/stdout" 2> "$signal_output/stderr" &
+        reduced_signal_pid=$!
+        for _ in $(seq 1 300); do
+            [[ -e "$signal_ready" ]] && break
+            kill -0 "$reduced_signal_pid" 2>/dev/null || break
+            sleep 0.01
+        done
+        [[ -e "$signal_ready" ]] || fail "$signal_case did not reach the non-creating signal boundary"
+        kill -TERM "$reduced_signal_pid"
+        set +e
+        wait "$reduced_signal_pid"
+        signal_rc=$?
+        set -e
+        printf '%s\n' "$signal_rc" > "$signal_output/exit-code"
+        [[ $signal_rc -eq 143 && ! -e "$signal_output/recovery-registration.json" ]] \
+            || fail "$signal_case did not acknowledge TERM without a record"
+        printf '%s\tTERM_ACKNOWLEDGED\tno-record\n' "$signal_case" >> "$evidence_dir/signal-matrix.tsv"
+    done
+
+    [[ ! -e "$reduced_root" && ! -s "$reduced_mv_log" ]] \
+        || fail "reduced recovery path created or relocated an external root"
+    python3 - "$reduced_bin" <<'PY'
+import pathlib
+import sys
+
+directory = pathlib.Path(sys.argv[1])
+for name in ("docker", "mv"):
+    (directory / name).unlink()
+directory.rmdir()
+PY
+    printf '{"externalRootCreated":false,"archiveOrRelocationCount":0,"rootTeardownCount":0,"mountMutationCount":0,"imageMutationCount":0,"dockerMutationCount":0}\n' \
+        > "$evidence_dir/cleanup-receipt.json"
+    printf 'PASS: reduced recovery validation, retention, and signal matrix; no external root or relocation\n'
+    exit 0
+fi
 fake_root=$(mktemp -d "${TMPDIR:-/tmp}/ink-color-cleanup-guardrail.XXXXXX")
 chmod 700 "$fake_root"
 trap cleanup EXIT HUP INT TERM
@@ -949,7 +1060,7 @@ PY
     fail "current launcher has no valid registration-only recovery path"
 fi
 
-if [[ "$mode" == --recovery-registration-tests || "$mode" == --recovery-registration-demo || "$mode" == --r10-red ]]; then
+if [[ "$mode" == --r10-red ]]; then
     scenario_dir="$evidence_dir/recovery-build-failure"
     recovery_test_profile=synthetic-test
     run_scenario recovery-build-failure
@@ -1348,20 +1459,6 @@ PY
 
     [[ "$(shasum -a 256 "$original_registry" | awk '{print $1}')" == "$original_digest" ]] \
         || fail "refusal matrix changed the original registry"
-    retained_root="$evidence_dir/retained-recovery-root"
-    [[ ! -e "$retained_root" ]] || fail "retained recovery evidence already exists"
-    mv "$recovery_root" "$retained_root"
-    archive_rename_count=1
-    for suffix in symlink-observation replacement-observation; do
-        observation="$recovery_root.$suffix"
-        if [[ -e "$observation" || -L "$observation" ]]; then
-            mv "$observation" "$evidence_dir/retained-$suffix"
-            archive_rename_count=$((archive_rename_count + 1))
-        fi
-    done
-    printf '{"outcome":"retained","rootTeardownCount":0,"mountMutationCount":0,"imageMutationCount":0,"dockerMutationCount":0,"evidenceArchiveRenameCount":%s}\n' \
-        "$archive_rename_count" > "$evidence_dir/cleanup-receipt.json"
-    recovery_root=""
     if [[ "$mode" == --recovery-registration-demo ]]; then
         printf 'PASS: recovery registration demo; sealed registration-only record; original unchanged; candidate refused; no action\n'
     else

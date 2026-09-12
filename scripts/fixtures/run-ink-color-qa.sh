@@ -69,6 +69,15 @@ def check_cancelled():
 signal.signal(signal.SIGTERM, interrupt_registration)
 signal.signal(signal.SIGINT, interrupt_registration)
 
+if os.environ.get("INK_QA_RECOVERY_INTERRUPT_STAGE") == "pause-before-validation":
+    ready = pathlib.Path(os.environ["INK_QA_RECOVERY_SIGNAL_READY"])
+    ready.touch(mode=0o600, exist_ok=False)
+    deadline = time.monotonic() + 15
+    while not cancelled_signal and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if cancelled_signal:
+        raise SystemExit(128 + cancelled_signal)
+
 worktree, root_arg, registry_arg, expected_digest, source_revision, profile, record_arg = sys.argv[1:]
 worktree = pathlib.Path(worktree)
 root = pathlib.Path(root_arg)
