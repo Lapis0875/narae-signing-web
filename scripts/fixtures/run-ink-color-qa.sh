@@ -1668,41 +1668,62 @@ expect_local_selector_guard() {
     local expected_status=$3
     local expected_output=$4
     local expected_calls=$5
-    local service_file="$temporary_root/selector.pg_service.conf"
+    local service_file=${6:-"$temporary_root/selector.pg_service.conf"}
     local fake_bin="$temporary_root/fake-psql-bin"
     local sentinel="$temporary_root/$scenario.psql.calls"
+    local environment_sentinel="$temporary_root/$scenario.psql.environment"
     local output="$evidence_dir/$scenario.txt"
     local result=0
     : > "$sentinel"
+    : > "$environment_sentinel"
     if [[ "$service" == unset ]]; then
-        env -u PGSERVICE PGSERVICEFILE="$service_file" INK_QA_PSQL_SENTINEL="$sentinel" \
+        env -u PGSERVICE PGHOST=hostile-host.invalid PGHOSTADDR=203.0.113.9 PGPORT=6543 \
+            PGDATABASE=hostile_database PGUSER=hostile_user PGSERVICEFILE="$service_file" \
+            INK_QA_PSQL_SENTINEL="$sentinel" INK_QA_PSQL_ENV_SENTINEL="$environment_sentinel" \
             PATH="$fake_bin:$PATH" sh "$root/scripts/release/check-ink-color-schema.sh" board-ink \
             > "$output" 2>&1 || result=$?
     else
-        PGSERVICE="$service" PGSERVICEFILE="$service_file" INK_QA_PSQL_SENTINEL="$sentinel" \
+        PGHOST=hostile-host.invalid PGHOSTADDR=203.0.113.9 PGPORT=6543 PGDATABASE=hostile_database \
+            PGUSER=hostile_user PGSERVICE="$service" PGSERVICEFILE="$service_file" \
+            INK_QA_PSQL_SENTINEL="$sentinel" INK_QA_PSQL_ENV_SENTINEL="$environment_sentinel" \
             PATH="$fake_bin:$PATH" sh "$root/scripts/release/check-ink-color-schema.sh" board-ink \
             > "$output" 2>&1 || result=$?
     fi
-    local calls
+    local calls environment_failures
     calls=$(wc -l < "$sentinel" | tr -d ' ')
-    if [[ $result -ne $expected_status || "$(cat "$output")" != "$expected_output" || $calls -ne $expected_calls ]]; then
+    environment_failures=$(wc -l < "$environment_sentinel" | tr -d ' ')
+    if [[ $result -ne $expected_status || "$(cat "$output")" != "$expected_output" || $calls -ne $expected_calls || $environment_failures -ne 0 ]]; then
         printf 'FAIL: %s returned status=%s output=%q psql_calls=%s\n' \
             "$scenario" "$result" "$(cat "$output")" "$calls" >&2
         schema_failures=$((schema_failures + 1))
     fi
     printf '%s status=%s psql_calls=%s\n' "$scenario" "$result" "$calls" \
         >> "$evidence_dir/schema-selector-summary.txt"
+    printf '%s target_env_failures=%s\n' "$scenario" "$environment_failures" \
+        >> "$evidence_dir/schema-selector-environment-summary.txt"
 }
 
 run_schema_selector_contract_tests() {
     local service_file="$temporary_root/selector.pg_service.conf"
+    local service_parent="$temporary_root/selector-service-parent"
+    local service_parent_alias="$temporary_root/selector-service-parent-alias"
+    local parent_aliased_service_file="$service_parent_alias/selector.pg_service.conf"
     local fake_bin="$temporary_root/fake-psql-bin"
     mkdir -m 700 "$fake_bin"
     printf '[approved]\nhost=synthetic.invalid\ndbname=synthetic\nuser=synthetic\n' > "$service_file"
     chmod 600 "$service_file"
+    mkdir -m 700 "$service_parent"
+    cp "$service_file" "$service_parent/selector.pg_service.conf"
+    chmod 600 "$service_parent/selector.pg_service.conf"
+    ln -s "$service_parent" "$service_parent_alias"
     cat > "$fake_bin/psql" <<'EOF'
 #!/bin/sh
 printf 'called\n' >> "${INK_QA_PSQL_SENTINEL:?}"
+if [ -n "${PGHOST+x}" ] || [ -n "${PGHOSTADDR+x}" ] || [ -n "${PGPORT+x}" ] || \
+   [ -n "${PGDATABASE+x}" ] || [ -n "${PGUSER+x}" ]; then
+    printf 'target-variable-present\n' >> "${INK_QA_PSQL_ENV_SENTINEL:?}"
+    exit 3
+fi
 [ "${PGSERVICE:-}" = approved ] || exit 2
 printf '%s\n' 't|t|f|t|t|t|t'
 EOF
@@ -1712,10 +1733,13 @@ EOF
         registry_declare local process-intent "$fake_bin/psql"
     fi
     : > "$evidence_dir/schema-selector-summary.txt"
+    : > "$evidence_dir/schema-selector-environment-summary.txt"
     expect_local_selector_guard selector-missing unset 69 'INDETERMINATE: connection' 0
     expect_local_selector_guard selector-empty '' 69 'INDETERMINATE: connection' 0
     expect_local_selector_guard selector-valid approved 0 'COMPATIBLE: board-ink' 1
     expect_local_selector_guard selector-wrong wrong 69 'INDETERMINATE: connection' 1
+    expect_local_selector_guard selector-parent-symlink approved 69 'INDETERMINATE: connection' 0 \
+        "$parent_aliased_service_file"
 }
 
 run_local_schema_selector_tests() {
@@ -1731,9 +1755,9 @@ run_local_schema_selector_tests() {
     trap 'exit 143' TERM
     run_schema_selector_contract_tests
     [[ $schema_failures -eq 0 ]] || fail "$schema_failures schema selector expectations failed"
-    printf '{"applicable":true,"outcome":"passed","scenarios":4}\n' \
+    printf '{"applicable":true,"outcome":"passed","scenarios":5}\n' \
         > "$evidence_dir/schema-selector-result.json"
-    printf 'PASS: 4 schema selector scenarios\n'
+    printf 'PASS: 5 schema selector scenarios\n'
 }
 
 expect_guard() {

@@ -7,6 +7,37 @@ verdict() {
     printf '%s: %s\n' "$1" "$2"
 }
 
+is_canonical_regular_file() {
+    path=$1
+
+    case "$path" in
+        /*) ;;
+        *) return 1 ;;
+    esac
+
+    remainder=${path#/}
+    [ -n "$remainder" ] || return 1
+    checked_path=""
+    while [ -n "$remainder" ]; do
+        component=${remainder%%/*}
+        case "$component" in
+            ''|.|..) return 1 ;;
+        esac
+
+        if [ -z "$checked_path" ]; then
+            checked_path=/$component
+        else
+            checked_path=$checked_path/$component
+        fi
+        [ ! -L "$checked_path" ] || return 1
+
+        [ "$remainder" = "$component" ] && break
+        remainder=${remainder#*/}
+    done
+
+    [ -f "$path" ] && [ ! -L "$path" ]
+}
+
 case "$target" in
     legacy|board-ink) ;;
     *) verdict INVALID target >&2; exit 64 ;;
@@ -28,7 +59,7 @@ if ! command -v psql >/dev/null 2>&1; then
 fi
 
 service_file=${PGSERVICEFILE:-}
-if [ -z "$service_file" ] || [ ! -f "$service_file" ] || [ -L "$service_file" ]; then
+if [ -z "$service_file" ] || ! is_canonical_regular_file "$service_file"; then
     verdict INDETERMINATE connection >&2
     exit 69
 fi
@@ -45,6 +76,8 @@ if [ "$permissions" != 600 ]; then
     verdict INDETERMINATE connection >&2
     exit 69
 fi
+
+unset PGHOST PGHOSTADDR PGPORT PGDATABASE PGUSER
 
 catalog_query="
 WITH facts AS (
