@@ -8,6 +8,7 @@ const boardSchema = z.object({
   id: z.uuid(),
   signatureInkColor: z.enum(["black", "white"]),
   status: z.enum(["설정 중", "서명 진행", "마감/보관"]),
+  title: z.string().min(1),
 });
 const errorSchema = z.object({ code: z.string().min(1) });
 const signatureSchema = z.object({

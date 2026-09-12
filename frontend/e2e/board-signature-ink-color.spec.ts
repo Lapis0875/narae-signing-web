@@ -67,6 +67,10 @@ test("Given real board contexts When white ink completes Then live and final pix
   const anonymousContext = await browser.newContext(contextOptions);
   const blackDisplayContext = await browser.newContext(contextOptions);
   const blackSignerContext = await browser.newContext(contextOptions);
+  const racePeerContext = await browser.newContext({
+    ...contextOptions,
+    extraHTTPHeaders: { "X-Narae-Client-IP": "127.0.0.1" },
+  });
   const contexts = [
     adminContext,
     displayContext,
@@ -74,6 +78,7 @@ test("Given real board contexts When white ink completes Then live and final pix
     anonymousContext,
     blackDisplayContext,
     blackSignerContext,
+    racePeerContext,
   ];
   try {
     const admin = await adminContext.newPage();
@@ -82,6 +87,7 @@ test("Given real board contexts When white ink completes Then live and final pix
     const anonymous = await anonymousContext.newPage();
     const blackDisplay = await blackDisplayContext.newPage();
     const blackSigner = await blackSignerContext.newPage();
+    const racePeer = await racePeerContext.newPage();
     const adminVisualEvents = visualDiagnosis ? observeVisualPage(admin) : [];
     const displayVisualEvents = visualDiagnosis
       ? observeVisualPage(display)
@@ -419,6 +425,16 @@ test("Given real board contexts When white ink completes Then live and final pix
           return response.json();
         }, shareToken),
       );
+    const draftPointCount = (snapshot: ReturnType<typeof displaySnapshot>) =>
+      snapshot.slots.reduce(
+        (total, slot) =>
+          total +
+          (slot.draftSignature?.strokes.reduce(
+            (slotTotal, stroke) => slotTotal + stroke.points.length,
+            0,
+          ) ?? 0),
+        0,
+      );
     await expect
       .poll(async () =>
         (await readDisplaySnapshot()).slots.some(
@@ -462,6 +478,130 @@ test("Given real board contexts When white ink completes Then live and final pix
     const liveWhite = await opaquePixelCount(publicCanvas, [255, 255, 255]);
     const livePixelLatencyMs = Date.now() - strokeStartedAt;
     expect(liveWhite.first).not.toBeNull();
+
+    const snapshotPattern = `**/api/v1/public/links/${shareToken}/display/snapshot`;
+    let releaseStaleSnapshot = () => undefined;
+    let markStaleSnapshotCaptured = (
+      _snapshot: ReturnType<typeof displaySnapshot>,
+    ) => undefined;
+    let markStaleSnapshotDelivered = () => undefined;
+    const staleSnapshotCaptured = new Promise<
+      ReturnType<typeof displaySnapshot>
+    >((resolve) => {
+      markStaleSnapshotCaptured = resolve;
+    });
+    const staleSnapshotRelease = new Promise<void>((resolve) => {
+      releaseStaleSnapshot = resolve;
+    });
+    const staleSnapshotDelivered = new Promise<void>((resolve) => {
+      markStaleSnapshotDelivered = resolve;
+    });
+    let staleRequestHeld = false;
+    const holdStaleSnapshot = async (
+      route: Parameters<typeof display.route>[1],
+    ) => {
+      if (staleRequestHeld) {
+        await route.continue();
+        return;
+      }
+      staleRequestHeld = true;
+      const response = await route.fetch();
+      const body = await response.body();
+      markStaleSnapshotCaptured(
+        displaySnapshot(JSON.parse(body.toString("utf8"))),
+      );
+      await staleSnapshotRelease;
+      await route.fulfill({
+        body,
+        headers: response.headers(),
+        status: response.status(),
+      });
+      markStaleSnapshotDelivered();
+    };
+    await display.route(snapshotPattern, holdStaleSnapshot);
+    const geometryBeforeNewerStroke = liveWhite;
+    let newerGeometry = liveWhite;
+    let stalePointCount = 0;
+    let currentPointCount = 0;
+    try {
+      const staleSnapshot = await staleSnapshotCaptured;
+      expect(staleSnapshot.signatureInkColor).toBe("white");
+      stalePointCount = draftPointCount(staleSnapshot);
+      const completedNewerDraft = signer.waitForResponse(
+        (response) =>
+          response.status() === 200 &&
+          new URL(response.url()).pathname.endsWith(
+            "/signing-session/draft/delta",
+          ) &&
+          (response.request().postData() ?? "").includes('"operation":"end"'),
+      );
+      await drawStroke(signer, 0.75);
+      await completedNewerDraft;
+      await expect
+        .poll(
+          async () =>
+            (await opaquePixelCount(publicCanvas, [255, 255, 255])).count,
+        )
+        .toBeGreaterThan(geometryBeforeNewerStroke.count);
+      newerGeometry = await opaquePixelCount(publicCanvas, [255, 255, 255]);
+      const currentSnapshotResponse = await display.evaluate(async (token) => {
+        const response = await fetch(
+          `/api/v1/public/links/${encodeURIComponent(token)}/display/snapshot`,
+        );
+        return { body: await response.json(), status: response.status };
+      }, shareToken);
+      expect(currentSnapshotResponse.status).toBe(200);
+      currentPointCount = draftPointCount(
+        displaySnapshot(currentSnapshotResponse.body),
+      );
+      expect(currentPointCount).toBeGreaterThan(stalePointCount);
+      expect(newerGeometry.targetBounds?.maxY).toBeGreaterThan(
+        geometryBeforeNewerStroke.targetBounds?.maxY ?? 0,
+      );
+      expect(newerGeometry.strokeStyle).toBe("#ffffff");
+      await display.screenshot({
+        fullPage: true,
+        path: path.join(
+          evidenceDir,
+          "white-live-newer-before-stale-release.png",
+        ),
+      });
+      releaseStaleSnapshot();
+      await staleSnapshotDelivered;
+      await expect
+        .poll(async () => {
+          const afterStale = await opaquePixelCount(
+            publicCanvas,
+            [255, 255, 255],
+          );
+          return {
+            count: afterStale.count,
+            strokeStyle: afterStale.strokeStyle,
+            targetBounds: afterStale.targetBounds,
+          };
+        })
+        .toEqual({
+          count: newerGeometry.count,
+          strokeStyle: "#ffffff",
+          targetBounds: newerGeometry.targetBounds,
+        });
+      await display.screenshot({
+        fullPage: true,
+        path: path.join(evidenceDir, "white-live-after-stale-release.png"),
+      });
+    } finally {
+      releaseStaleSnapshot();
+      await staleSnapshotDelivered;
+      await display.unroute(snapshotPattern, holdStaleSnapshot);
+    }
+    const staleSnapshotRace = {
+      color: newerGeometry.strokeStyle,
+      geometryBefore: geometryBeforeNewerStroke.targetBounds,
+      geometryRetained: newerGeometry.targetBounds,
+      currentPointCount,
+      opaqueWhitePixels: newerGeometry.count,
+      stalePointCount,
+    };
     if (visualDiagnosis && !missingVisualsOnly) {
       visualStates.push(
         await captureVisualState(
@@ -599,18 +739,23 @@ test("Given real board contexts When white ink completes Then live and final pix
       (await darkBackground(raceAdmin)).buffer,
     );
     await addPlacedRoster(raceAdmin);
-    const racePeer = await adminContext.newPage();
+    await login(racePeer, baseUrl, email, password);
     await racePeer.goto(
       new URL(`/boards/${raceBoardId}/edit`, baseUrl).toString(),
     );
     await expect(racePeer.getByRole("radio", { name: "검정" })).toBeChecked();
     const racePath = `/api/v1/admin/boards/${raceBoardId}`;
+    const initialRaceTitle = "Task 8 다중 탭 경쟁 검증";
+    const committedRaceTitle = "Task 8 원자 경쟁 성공";
     const [racePatch, raceOpen] = await Promise.all([
       adminJson(
         raceAdmin,
         racePath,
         "PATCH",
-        JSON.stringify({ signatureInkColor: "white" }),
+        JSON.stringify({
+          signatureInkColor: "white",
+          title: committedRaceTitle,
+        }),
       ),
       adminJson(racePeer, `${racePath}/open`, "POST"),
     ]);
@@ -618,9 +763,19 @@ test("Given real board contexts When white ink completes Then live and final pix
     expect([200, 409]).toContain(racePatch.status);
     const raceState = board((await adminJson(raceAdmin, racePath, "GET")).body);
     expect(raceState.status).toBe("서명 진행");
-    expect(raceState.signatureInkColor).toBe(
-      racePatch.status === 200 ? "white" : "black",
-    );
+    if (racePatch.status === 200) {
+      expect(raceState).toMatchObject({
+        signatureInkColor: "white",
+        title: committedRaceTitle,
+      });
+    } else {
+      expect(racePatch.status).toBe(409);
+      expect(errorCode(racePatch.body)).toBe("BOARD_NOT_DRAFT");
+      expect(raceState).toMatchObject({
+        signatureInkColor: "black",
+        title: initialRaceTitle,
+      });
+    }
     await Promise.all([raceAdmin.reload(), racePeer.reload()]);
     for (const page of [raceAdmin, racePeer]) {
       await expect(page.getByText("서명 진행", { exact: true })).toBeVisible();
@@ -630,6 +785,7 @@ test("Given real board contexts When white ink completes Then live and final pix
         }),
       ).toBeChecked();
       await expect(page.getByRole("radio", { name: "흰색" })).toBeDisabled();
+      await expect(page.getByLabel("보드 제목")).toHaveValue(raceState.title);
     }
 
     if (visualDiagnosis) {
@@ -816,8 +972,13 @@ test("Given real board contexts When white ink completes Then live and final pix
           },
           multiTabRace: {
             finalColor: raceState.signatureInkColor,
+            finalTitle: raceState.title,
             openStatus: raceOpen.status,
             patchStatus: racePatch.status,
+            serializedOutcome:
+              racePatch.status === 200
+                ? "patch-before-open"
+                : "open-before-patch",
           },
           nginxBacked: true,
           runtimeTiming: {
@@ -828,6 +989,7 @@ test("Given real board contexts When white ink completes Then live and final pix
             submittedPixelLatencyMs,
           },
           signerPadBlackPixels: signerBlack.count,
+          staleSnapshotRace,
           submitCompletion: afterSubmit,
         },
         null,

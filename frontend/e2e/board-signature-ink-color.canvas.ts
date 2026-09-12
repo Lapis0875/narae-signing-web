@@ -15,6 +15,12 @@ export type PixelSummary = {
   readonly opaque: number;
   readonly partialAlpha: number;
   readonly pixelRatio: number;
+  readonly targetBounds: {
+    readonly maxX: number;
+    readonly maxY: number;
+    readonly minX: number;
+    readonly minY: number;
+  } | null;
   readonly rectHeight: number;
   readonly rectWidth: number;
   readonly strokeStyle: string;
@@ -48,6 +54,7 @@ export async function opaquePixelCount(
       rectHeight: element.getBoundingClientRect().height,
       rectWidth: element.getBoundingClientRect().width,
       strokeStyle,
+      targetBounds: null,
       transform: [],
       transparent: 0,
       white: 0,
@@ -75,6 +82,10 @@ export async function opaquePixelCount(
     let white = 0;
     let whiteAlpha = 0;
     let whiteish = 0;
+    let targetMaxX = -1;
+    let targetMaxY = -1;
+    let targetMinX = element.width;
+    let targetMinY = element.height;
     for (let index = 0; index < pixels.length; index += 4) {
       const red = pixels[index] ?? 0;
       const green = pixels[index + 1] ?? 0;
@@ -102,10 +113,16 @@ export async function opaquePixelCount(
         blue === target[2] &&
         alpha === 255
       ) {
+        const x = (index / 4) % element.width;
+        const y = Math.floor(index / 4 / element.width);
         count += 1;
+        targetMaxX = Math.max(targetMaxX, x);
+        targetMaxY = Math.max(targetMaxY, y);
+        targetMinX = Math.min(targetMinX, x);
+        targetMinY = Math.min(targetMinY, y);
         first ??= {
-          x: (index / 4) % element.width,
-          y: Math.floor(index / 4 / element.width),
+          x,
+          y,
         };
       }
     }
@@ -129,6 +146,15 @@ export async function opaquePixelCount(
       rectHeight: rect.height,
       rectWidth: rect.width,
       strokeStyle: String(context.strokeStyle),
+      targetBounds:
+        count === 0
+          ? null
+          : {
+              maxX: targetMaxX / element.width,
+              maxY: targetMaxY / element.height,
+              minX: targetMinX / element.width,
+              minY: targetMinY / element.height,
+            },
       transform: [
         transform.a,
         transform.b,
