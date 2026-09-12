@@ -13,6 +13,7 @@ import signal
 import stat
 import subprocess
 import sys
+import time
 
 root = pathlib.Path(sys.argv[1])
 output = pathlib.Path(sys.argv[2]).resolve()
@@ -145,6 +146,101 @@ for scenario in ("timeout", "term"):
         print(json.dumps({"scenario": scenario, "supervisorPid": supervisor.pid,
                           "tree": [int(value) for value in ready[1:]],
                           "exitCode": supervisor.returncode, "processGone": True, "groupGone": True}))
+# Given a real metadata write failure, when supervision unwinds, then owned groups are gone.
+writer_driver = r'''
+import importlib.util
+import json
+import os
+import pathlib
+import sys
+runner, failed_event, evidence, run_id = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("owned_runner", runner)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+append = module.append_lifecycle
+def fail_writer(event, **fields):
+    if event == failed_event:
+        print(json.dumps({"event": "writer-failure-injected", "failedEvent": event,
+                          "runId": run_id, "supervisorPid": os.getpid(),
+                          "pid": fields["pid"], "pgid": fields["pgid"]}), flush=True)
+        pathlib.Path(evidence).chmod(0o644)
+        try:
+            append(event, **fields)
+        finally:
+            pathlib.Path(evidence).chmod(0o600)
+    else:
+        append(event, **fields)
+module.append_lifecycle = fail_writer
+child = "import os,time; fd=os.open(os.devnull,os.O_WRONLY); os.dup2(fd,1); os.dup2(fd,2); time.sleep(60)"
+if failed_event == "cleanup-requested":
+    child = ("import json,subprocess,sys; p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'],"
+             "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);"
+             "print(json.dumps({'descendantPid':p.pid}),flush=True)")
+sys.argv = [runner, "--timeout", "5", sys.executable, "-c", child]
+raise SystemExit(module.supervise())
+'''
+writer_survivors = []
+for failed_event in ("started", "cleanup-requested"):
+    evidence = output / f"writer-failure-{failed_event}.jsonl"
+    evidence.write_text(json.dumps({"event": "registered", "identity": str(evidence), "runId": run_id}) + "\n")
+    evidence.chmod(0o600)
+    environment["TASK30_LIFECYCLE_FILE"] = str(evidence)
+    failed = subprocess.run([sys.executable, "-c", writer_driver, str(runner), failed_event, str(evidence), run_id],
+                            env=environment, capture_output=True, text=True, timeout=25, start_new_session=True)
+    records = [json.loads(line) for line in failed.stdout.splitlines()]
+    boundary = next(record for record in records if record.get("event") == "writer-failure-injected")
+    owned_pid, owned_group = boundary["pid"], boundary["pgid"]
+    owned_pids = [boundary["supervisorPid"], owned_pid] + [record["descendantPid"] for record in records if "descendantPid" in record]
+    owned_groups = [boundary["supervisorPid"], owned_group]
+    observed = []
+    try:
+        for kind, identity, query in [("pid", value, os.kill) for value in owned_pids] + [("pgid", value, os.killpg) for value in owned_groups]:
+            try:
+                query(identity, 0)
+            except ProcessLookupError:
+                observed.append({"kind": kind, "identity": identity, "absent": True})
+            else:
+                observed.append({"kind": kind, "identity": identity, "absent": False})
+        emitted = [json.loads(line) for line in evidence.read_text().splitlines()]
+        print(json.dumps({"scenario": "writer-failure", "runId": run_id, "failedEvent": failed_event,
+                          "exitCode": failed.returncode, "checks": observed,
+                          "error": failed.stderr.splitlines()[-1], "lifecycle": emitted}), flush=True)
+        assert failed.returncode != 0 and "LIFECYCLE_FILE_METADATA_INVALID" in failed.stderr
+        if not all(record["absent"] for record in observed):
+            writer_survivors.append(failed_event)
+        else:
+            expected = ["registered", "cleanup-requested", "absence"] if failed_event == "started" else ["registered", "started", "exited", "absence"]
+            assert [event["event"] for event in emitted] == expected
+            assert all(event["runId"] == run_id for event in emitted)
+            assert emitted[-1] == {"event": "absence", "runId": run_id, "pid": owned_pid,
+                                   "pgid": owned_group, "processGone": True, "groupGone": True}
+    finally:
+        # A failing-first run must clean only the exact group it just proved was leaked.
+        for requested_signal in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(owned_group, requested_signal)
+            except ProcessLookupError:
+                break
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                try:
+                    os.killpg(owned_group, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            else:
+                continue
+            break
+        for kind, identity, query in [("pid", value, os.kill) for value in owned_pids] + [("pgid", value, os.killpg) for value in owned_groups]:
+            try:
+                query(identity, 0)
+            except ProcessLookupError:
+                print(json.dumps({"cleanup": failed_event, "kind": kind, "identity": identity, "absent": True}))
+            else:
+                raise AssertionError("writer failure probe cleanup leaked")
+    checks += len(observed)
+assert not writer_survivors, f"writer failures bypassed cleanup: {writer_survivors}"
 print(json.dumps({"status": "PASS", "checks": checks, "runId": run_id,
                   "lifecycle": str(lifecycle), "pid": pid, "pgid": pgid,
                   "processGone": True, "groupGone": True}))

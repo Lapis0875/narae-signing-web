@@ -522,19 +522,18 @@ def supervise() -> int:
         cwd=working_directory or None,
         start_new_session=True,
     )
-    process_group = os.getpgid(process.pid)
-    append_lifecycle(
-        "started",
-        pid=process.pid,
-        pgid=process_group,
-        command=sys.argv[3:],
-        cwd=working_directory or os.getcwd(),
-    )
+    process_group = process.pid
     cleanup = lambda: terminate_process(process, SUPERVISED_GRACE_SECONDS)
     result: int | None = None
-    cleanup_error: BaseException | None = None
     try:
         with cleanup_on_signals(cleanup):
+            append_lifecycle(
+                "started",
+                pid=process.pid,
+                pgid=process_group,
+                command=sys.argv[3:],
+                cwd=working_directory or os.getcwd(),
+            )
             result = wait_bounded(process, seconds, "COMMAND_TIMEOUT")
             append_lifecycle(
                 "exited",
@@ -543,20 +542,19 @@ def supervise() -> int:
                 exitCode=result,
             )
     finally:
-        append_lifecycle("cleanup-requested", pid=process.pid, pgid=process_group)
         try:
-            cleanup()
-        except BaseException as error:
-            cleanup_error = error
-        append_lifecycle(
-            "absence",
-            pid=process.pid,
-            pgid=process_group,
-            processGone=not process_exists(process.pid),
-            groupGone=not group_exists(process_group),
-        )
-    if cleanup_error is not None:
-        raise cleanup_error
+            append_lifecycle("cleanup-requested", pid=process.pid, pgid=process_group)
+        finally:
+            try:
+                cleanup()
+            finally:
+                append_lifecycle(
+                    "absence",
+                    pid=process.pid,
+                    pgid=process_group,
+                    processGone=not process_exists(process.pid),
+                    groupGone=not group_exists(process_group),
+                )
     if result is None:
         raise Task30RunnerError("SUPERVISED_RESULT_MISSING")
     return result
